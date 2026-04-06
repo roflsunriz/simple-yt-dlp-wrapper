@@ -42,6 +42,12 @@ class DownloadCancelledError(YtDlpError):
         super().__init__("download_cancelled", "ダウンロード中止", details)
 
 
+def _require_yt_dlp_path(dependencies: DependencyStatus) -> str:
+    if not dependencies.yt_dlp_path:
+        raise YtDlpError("missing_yt_dlp", "yt-dlp 未検出", "yt-dlp が見つかりません。")
+    return dependencies.yt_dlp_path
+
+
 def _build_env(ffmpeg_path: str | None) -> dict[str, str]:
     env = os.environ.copy()
     if ffmpeg_path:
@@ -62,11 +68,10 @@ def _run_command(command: list[str], ffmpeg_path: str | None = None) -> subproce
 
 
 def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
-    if not dependencies.has_yt_dlp:
-        raise YtDlpError("missing_yt_dlp", "yt-dlp 未検出", "yt-dlp が見つかりません。")
+    yt_dlp_path = _require_yt_dlp_path(dependencies)
 
     result = _run_command(
-        [dependencies.yt_dlp_path, "--no-playlist", "-J", "--simulate", url],
+        [yt_dlp_path, "--no-playlist", "-J", "--simulate", url],
         dependencies.ffmpeg_path,
     )
     if result.returncode != 0:
@@ -136,8 +141,9 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
 
 
 def _fetch_thumbnail_url(url: str, dependencies: DependencyStatus) -> str:
+    yt_dlp_path = _require_yt_dlp_path(dependencies)
     result = _run_command(
-        [dependencies.yt_dlp_path, "--list-thumbnails", "--no-playlist", url],
+        [yt_dlp_path, "--list-thumbnails", "--no-playlist", url],
         dependencies.ffmpeg_path,
     )
     if result.returncode != 0:
@@ -222,7 +228,8 @@ def build_download_command(
     embed_subtitle: bool,
     overwrite: bool,
 ) -> list[str]:
-    command = [dependencies.yt_dlp_path, "--newline", "--no-playlist", "-P", output_dir]
+    yt_dlp_path = _require_yt_dlp_path(dependencies)
+    command: list[str] = [yt_dlp_path, "--newline", "--no-playlist", "-P", output_dir]
     command.append("--force-overwrites" if overwrite else "--no-overwrites")
     command.extend(["-o", f"{sanitize_file_basename(file_basename or analysis.title)}.%(ext)s"])
 

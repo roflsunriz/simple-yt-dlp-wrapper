@@ -4,7 +4,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import APP_DIR
+from .config import WINDOWS_BIN_DIR
 
 
 @dataclass
@@ -22,7 +22,7 @@ class DependencyStatus:
 
 
 def _find_executable(name: str) -> str | None:
-    for candidate in (APP_DIR / name, APP_DIR / f"{name}.exe"):
+    for candidate in (WINDOWS_BIN_DIR / name, WINDOWS_BIN_DIR / f"{name}.exe"):
         if candidate.exists():
             return str(candidate)
     return shutil.which(name) or shutil.which(f"{name}.exe")

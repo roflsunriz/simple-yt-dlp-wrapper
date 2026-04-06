@@ -4,6 +4,7 @@ import os
 import logging
 import urllib.request
 from pathlib import Path
+from typing import cast
 
 from PyQt6.QtCore import QThreadPool, Qt
 from PyQt6.QtGui import QCloseEvent, QGuiApplication, QPixmap
@@ -28,7 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .config import AppSettings
+from .config import AppSettings, LOG_DIR
 from .dependencies import DependencyStatus, detect_dependencies
 from .filename_utils import sanitize_file_basename
 from .logging_utils import configure_logging, log_event
@@ -66,7 +67,7 @@ class MainWindow(QMainWindow):
         self.resize(1100, 760)
 
         self.logger = configure_logging()
-        self.thread_pool = QThreadPool.globalInstance()
+        self.thread_pool = cast(QThreadPool, QThreadPool.globalInstance())
         settings_result = AppSettings.load()
         self.settings = settings_result.settings
         self.settings_load_warning = settings_result.warning
@@ -292,7 +293,10 @@ class MainWindow(QMainWindow):
         self._update_mode_summary()
 
     def _paste_url(self) -> None:
-        self.url_input.setText(QGuiApplication.clipboard().text().strip())
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is None:
+            return
+        self.url_input.setText(clipboard.text().strip())
 
     def _start_analysis(self) -> None:
         url = self.url_input.text().strip()
@@ -715,17 +719,16 @@ class MainWindow(QMainWindow):
         self._update_mode_summary()
 
     def _open_latest_log(self) -> None:
-        log_dir = Path(__file__).resolve().parents[2] / "logs"
-        if not log_dir.exists():
+        if not LOG_DIR.exists():
             self._show_error("ログ未作成", "ログファイルはまだ作成されていません。")
             return
-        candidates = sorted(log_dir.glob("*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
+        candidates = sorted(LOG_DIR.glob("*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
         if not candidates:
             self._show_error("ログ未作成", "ログファイルはまだ作成されていません。")
             return
         os.startfile(candidates[0])
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def closeEvent(self, event: QCloseEvent | None) -> None:
         self._collect_settings()
         try:
             AppSettings.save(self.settings)
