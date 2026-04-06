@@ -184,7 +184,6 @@
 - URL分析の中止は許可しない
 - 分析処理は UI をブロックしない方法で実行する
 - `yt-dlp --simulate`で `yt-dlp` のダウンロード可否を判断
-- `yt-dlp --format FORMAT`や`yt-dlp --format-sort SORTORDER`でビデオフォーマット確認
 
 ### 8.3 成功条件
 

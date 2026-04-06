@@ -53,7 +53,9 @@ class MainWindow(QMainWindow):
 
         self.logger = configure_logging()
         self.thread_pool = QThreadPool.globalInstance()
-        self.settings = AppSettings.load()
+        settings_result = AppSettings.load()
+        self.settings = settings_result.settings
+        self.settings_load_warning = settings_result.warning
         self.dependencies: DependencyStatus = detect_dependencies()
         self.analysis_result: AnalysisResult | None = None
         self.download_context: DownloadContext | None = None
@@ -206,6 +208,9 @@ class MainWindow(QMainWindow):
 
     def _show_dependency_warnings(self) -> None:
         messages = []
+        if self.settings_load_warning:
+            self.logger.warning("settings_load_recovered detail=%s", self.settings_load_warning)
+            messages.append(self.settings_load_warning)
         if not self.dependencies.has_yt_dlp:
             messages.append("yt-dlp が見つかりません。URL分析とダウンロードは利用できません。")
         if not self.dependencies.has_ffmpeg:

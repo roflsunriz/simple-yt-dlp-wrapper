@@ -11,6 +11,12 @@ LOG_DIR = APP_DIR / "logs"
 
 
 @dataclass
+class SettingsLoadResult:
+    settings: "AppSettings"
+    warning: str = ""
+
+
+@dataclass
 class AppSettings:
     download_mode: str = "best"
     video_format_id: str = ""
@@ -27,22 +33,25 @@ class AppSettings:
         return cls(output_dir=str(Path.home() / "Downloads"))
 
     @classmethod
-    def load(cls) -> "AppSettings":
+    def load(cls) -> SettingsLoadResult:
         defaults = cls.defaults()
         if not CONFIG_PATH.exists():
             cls.save(defaults)
-            return defaults
+            return SettingsLoadResult(settings=defaults)
         try:
             payload = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             merged = {**asdict(defaults), **payload}
             settings = cls(**merged)
-        except Exception:
+        except Exception as exc:
             cls.save(defaults)
-            return defaults
+            return SettingsLoadResult(
+                settings=defaults,
+                warning=f"設定ファイルの読み込みに失敗したため既定値で復旧しました: {exc}",
+            )
 
         if not Path(settings.output_dir).exists():
             settings.output_dir = defaults.output_dir
-        return settings
+        return SettingsLoadResult(settings=settings)
 
     @staticmethod
     def save(settings: "AppSettings") -> None:
