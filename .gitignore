@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 settings.json
 logs/
+
+# pyinstaller
+dist/
+build/
+*.spec
