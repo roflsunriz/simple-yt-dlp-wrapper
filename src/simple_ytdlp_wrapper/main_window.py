@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import urllib.request
 from pathlib import Path
 
@@ -30,8 +31,8 @@ from PyQt6.QtWidgets import (
 from .config import AppSettings
 from .dependencies import DependencyStatus, detect_dependencies
 from .filename_utils import sanitize_file_basename
-from .logging_utils import configure_logging
-from .models import AnalysisResult, DownloadContext, FormatOption
+from .logging_utils import configure_logging, log_event
+from .models import AnalysisResult, DownloadContext, FormatOption, StateConfig
 from .workers import AnalysisSignals, DownloadSignals, WorkerRunnable
 from .yt_dlp_service import (
     DownloadCancelledError,
@@ -39,10 +40,23 @@ from .yt_dlp_service import (
     analyze_url,
     build_download_command,
     cleanup_cancelled_download,
+    describe_mode_selection,
     format_bytes,
     run_download,
+    select_1080p_video,
     snapshot_existing_paths,
 )
+
+STATE_CONFIGS = {
+    "初期": StateConfig(True, True, False, False, True, True, True),
+    "分析中": StateConfig(False, False, False, False, False, False, False),
+    "分析成功": StateConfig(True, True, True, False, True, True, True),
+    "分析失敗": StateConfig(True, True, False, False, True, True, True),
+    "ダウンロード中": StateConfig(False, False, False, True, False, False, False),
+    "完了": StateConfig(True, True, False, False, True, True, True),
+    "中止": StateConfig(True, True, False, False, True, True, True),
+    "エラー": StateConfig(True, True, False, False, True, True, True),
+}
 
 
 class MainWindow(QMainWindow):
@@ -168,12 +182,15 @@ class MainWindow(QMainWindow):
 
         action_row = QHBoxLayout()
         self.save_settings_button = QPushButton("設定保存")
+        self.open_log_button = QPushButton("ログを開く")
         self.download_button = QPushButton("ダウンロード開始")
         self.cancel_button = QPushButton("中止")
         self.save_settings_button.clicked.connect(self._save_settings)
+        self.open_log_button.clicked.connect(self._open_latest_log)
         self.download_button.clicked.connect(self._start_download)
         self.cancel_button.clicked.connect(self._cancel_download)
         action_row.addWidget(self.save_settings_button)
+        action_row.addWidget(self.open_log_button)
         action_row.addStretch(1)
         action_row.addWidget(self.download_button)
         action_row.addWidget(self.cancel_button)
@@ -209,11 +226,19 @@ class MainWindow(QMainWindow):
     def _show_dependency_warnings(self) -> None:
         messages = []
         if self.settings_load_warning:
-            self.logger.warning("settings_load_recovered detail=%s", self.settings_load_warning)
+            log_event(
+                self.logger,
+                logging.WARNING,
+                "settings_load_recovered",
+                code="settings_load_failed",
+                detail=self.settings_load_warning,
+            )
             messages.append(self.settings_load_warning)
         if not self.dependencies.has_yt_dlp:
+            log_event(self.logger, logging.WARNING, "dependency_missing", code="missing_yt_dlp")
             messages.append("yt-dlp が見つかりません。URL分析とダウンロードは利用できません。")
         if not self.dependencies.has_ffmpeg:
+            log_event(self.logger, logging.WARNING, "dependency_missing", code="missing_ffmpeg")
             messages.append("ffmpeg が見つかりません。マージが必要なダウンロードは利用できません。")
         if messages:
             QMessageBox.warning(self, "依存関係の警告", "\n".join(messages))
@@ -221,21 +246,25 @@ class MainWindow(QMainWindow):
     def _set_state(self, state: str) -> None:
         self.status_name = state
         self.status_label.setText(f"状態: {state}")
-        downloading = state == "ダウンロード中"
-        analyzing = state == "分析中"
-        analysis_ready = state == "分析成功"
-        self.url_input.setEnabled(not downloading and not analyzing)
-        self.paste_button.setEnabled(not downloading and not analyzing)
-        self.analyze_button.setEnabled(not downloading and not analyzing and self.dependencies.has_yt_dlp)
-        self.cancel_button.setEnabled(downloading)
-        self.save_settings_button.setEnabled(not downloading)
-        self.browse_output_button.setEnabled(not downloading)
-        self.default_output_button.setEnabled(not downloading)
-        self.subtitle_checkbox.setEnabled(not downloading and bool(self.analysis_result and self.analysis_result.subtitles))
+        config = STATE_CONFIGS[state]
+        self.url_input.setEnabled(config.url_input)
+        self.paste_button.setEnabled(config.url_input)
+        self.analyze_button.setEnabled(config.analyze and self.dependencies.has_yt_dlp)
+        self.cancel_button.setEnabled(config.cancel)
+        self.save_settings_button.setEnabled(config.settings)
+        self.open_log_button.setEnabled(True)
+        self.output_dir_input.setEnabled(config.output_controls)
+        self.filename_input.setEnabled(config.output_controls)
+        self.browse_output_button.setEnabled(config.output_controls)
+        self.default_output_button.setEnabled(config.output_controls)
+        self.best_radio.setEnabled(config.mode_controls)
+        self.fullhd_radio.setEnabled(config.mode_controls)
+        self.manual_radio.setEnabled(config.mode_controls)
+        self.subtitle_checkbox.setEnabled(config.mode_controls and bool(self.analysis_result and self.analysis_result.subtitles))
         self.embed_subtitle_checkbox.setEnabled(
-            not downloading and self.subtitle_checkbox.isChecked() and bool(self.analysis_result and self.analysis_result.subtitles)
+            config.mode_controls and self.subtitle_checkbox.isChecked() and bool(self.analysis_result and self.analysis_result.subtitles)
         )
-        self.download_button.setEnabled(analysis_ready and self._download_ready())
+        self.download_button.setEnabled(config.download and self._download_ready())
         self._update_manual_controls()
 
     def _download_ready(self) -> bool:
@@ -270,6 +299,7 @@ class MainWindow(QMainWindow):
         if not url:
             self._show_error("URL 未入力", "URL を入力してください。")
             return
+        log_event(self.logger, logging.INFO, "analysis_started", url=url)
         self._set_state("分析中")
         self.status_details.setPlainText("分析中...")
         signals = AnalysisSignals()
@@ -281,19 +311,28 @@ class MainWindow(QMainWindow):
         try:
             signals.finished.emit(analyze_url(url, self.dependencies))
         except YtDlpError as exc:
-            self.logger.warning("analysis_failed code=%s url=%s detail=%s", exc.code, url, exc.details)
+            log_event(self.logger, logging.WARNING, "analysis_failed", url=url, code=exc.code, detail=exc.details)
             signals.failed.emit(exc.summary, exc.details)
         except Exception as exc:
+            log_event(self.logger, logging.ERROR, "analysis_failed", url=url, code="unexpected_error", detail=str(exc))
             self.logger.exception("analysis_failed url=%s", url)
             signals.failed.emit("URL分析失敗", str(exc))
 
     def _handle_analysis_success(self, result: AnalysisResult) -> None:
         self.analysis_result = result
+        log_event(
+            self.logger,
+            logging.INFO,
+            "analysis_succeeded",
+            url=result.original_url,
+            detail=f"video_formats={len(result.video_formats)} audio_formats={len(result.audio_formats)} subtitles={len(result.subtitles)}",
+        )
         self.title_value.setText(result.title)
         self.description_value.setPlainText(result.description)
         self.filename_input.setText(sanitize_file_basename(result.title))
         self._load_thumbnail(result.thumbnail_url)
         self._populate_format_combos(result)
+        self._apply_mode_defaults()
         if not result.subtitles:
             self.subtitle_checkbox.setChecked(False)
             self.embed_subtitle_checkbox.setChecked(False)
@@ -302,6 +341,7 @@ class MainWindow(QMainWindow):
             "\n".join(
                 [
                     "分析成功",
+                    f"判定: 実用的なダウンロード候補あり ({'動画' if result.video_formats else '音声'}取得可)",
                     f"動画候補: {len(result.video_formats)}",
                     f"音声候補: {len(result.audio_formats)}",
                     f"字幕候補: {len(result.subtitles)}",
@@ -313,7 +353,7 @@ class MainWindow(QMainWindow):
     def _handle_analysis_failure(self, summary: str, details: str) -> None:
         self.analysis_result = None
         self._set_state("分析失敗")
-        self._show_error(summary, details)
+        self._show_error(summary, details, detailed_title="分析詳細")
 
     def _populate_format_combos(self, result: AnalysisResult) -> None:
         self.video_combo.clear()
@@ -330,6 +370,7 @@ class MainWindow(QMainWindow):
             self.audio_combo.setCurrentIndex(audio_index)
         self._sync_manual_selection_state()
         self._update_subtitle_summary()
+        self._update_mode_summary()
 
     def _load_thumbnail(self, url: str) -> None:
         self.thumbnail_label.setPixmap(QPixmap())
@@ -410,11 +451,13 @@ class MainWindow(QMainWindow):
                 overwrite=overwrite,
             )
         except YtDlpError as exc:
-            self.logger.warning(
-                "download_precheck_failed code=%s url=%s detail=%s",
-                exc.code,
-                self.analysis_result.original_url,
-                exc.details,
+            log_event(
+                self.logger,
+                logging.WARNING,
+                "download_precheck_failed",
+                url=self.analysis_result.original_url,
+                code=exc.code,
+                detail=exc.details,
             )
             self._show_error(exc.summary, exc.details)
             return
@@ -424,6 +467,13 @@ class MainWindow(QMainWindow):
             output_dir=output_dir,
             basename=basename,
             existing_paths=snapshot_existing_paths(output_dir, basename),
+        )
+        log_event(
+            self.logger,
+            logging.INFO,
+            "download_started",
+            url=self.analysis_result.original_url,
+            detail=f"mode={mode} output_dir={output_dir} basename={basename}",
         )
         self.progress_bar.setValue(0)
         self.status_details.setPlainText("ダウンロード開始")
@@ -446,17 +496,26 @@ class MainWindow(QMainWindow):
                 on_output_path=lambda _path: None,
             )
         except DownloadCancelledError:
+            log_event(
+                self.logger,
+                logging.INFO,
+                "download_cancelled",
+                url=self.analysis_result.original_url if self.analysis_result else "",
+                code="download_cancelled",
+            )
             signals.cancelled.emit()
             return
         except YtDlpError as exc:
             if self.cancel_requested:
                 signals.cancelled.emit()
                 return
-            self.logger.warning(
-                "download_failed code=%s url=%s detail=%s",
-                exc.code,
-                self.analysis_result.original_url if self.analysis_result else "",
-                exc.details,
+            log_event(
+                self.logger,
+                logging.WARNING,
+                "download_failed",
+                url=self.analysis_result.original_url if self.analysis_result else "",
+                code=exc.code,
+                detail=exc.details,
             )
             signals.failed.emit(exc.summary, exc.details)
             return
@@ -464,6 +523,14 @@ class MainWindow(QMainWindow):
             if self.cancel_requested:
                 signals.cancelled.emit()
                 return
+            log_event(
+                self.logger,
+                logging.ERROR,
+                "download_failed",
+                url=self.analysis_result.original_url if self.analysis_result else "",
+                code="unexpected_error",
+                detail=str(exc),
+            )
             self.logger.exception("download_failed url=%s", self.analysis_result.original_url if self.analysis_result else "")
             signals.failed.emit("ダウンロード失敗", str(exc))
             return
@@ -490,6 +557,12 @@ class MainWindow(QMainWindow):
         )
 
     def _handle_download_success(self) -> None:
+        log_event(
+            self.logger,
+            logging.INFO,
+            "download_succeeded",
+            url=self.analysis_result.original_url if self.analysis_result else "",
+        )
         self.download_context = None
         self.progress_bar.setValue(100)
         self._set_state("完了")
@@ -499,10 +572,17 @@ class MainWindow(QMainWindow):
 
     def _handle_download_failure(self, summary: str, details: str) -> None:
         self._set_state("エラー")
-        self._show_error(summary, details)
+        self._show_error(summary, details, detailed_title="ダウンロード詳細")
 
     def _handle_download_cancelled(self) -> None:
         removed = cleanup_cancelled_download(self.download_context) if self.download_context else []
+        log_event(
+            self.logger,
+            logging.INFO,
+            "download_cancelled_cleanup",
+            url=self.analysis_result.original_url if self.analysis_result else "",
+            detail=f"removed={','.join(path.name for path in removed)}" if removed else "removed=none",
+        )
         self.download_context = None
         self._set_state("中止")
         details = ["ダウンロードを中止しました。"]
@@ -528,9 +608,11 @@ class MainWindow(QMainWindow):
         try:
             AppSettings.save(self.settings)
         except Exception as exc:
+            log_event(self.logger, logging.ERROR, "settings_save_failed", code="settings_save_failed", detail=str(exc))
             self.logger.exception("settings_save_failed")
             self._show_error("設定保存失敗", str(exc))
             return
+        log_event(self.logger, logging.INFO, "settings_saved")
         self.status_details.appendPlainText("設定を保存しました。")
 
     def _collect_settings(self) -> None:
@@ -546,8 +628,8 @@ class MainWindow(QMainWindow):
         self.settings.open_output_dir = self.open_output_checkbox.isChecked()
         self.settings.file_name = self.filename_input.text().strip()
 
-    def _show_error(self, summary: str, details: str) -> None:
-        self.status_details.setPlainText(f"{summary}\n{details}")
+    def _show_error(self, summary: str, details: str, detailed_title: str = "詳細") -> None:
+        self.status_details.setPlainText(f"{summary}\n[{detailed_title}]\n{details}")
         QMessageBox.critical(self, summary, details)
 
     def _manual_video_candidates(self, result: AnalysisResult) -> list[FormatOption]:
@@ -583,9 +665,13 @@ class MainWindow(QMainWindow):
             self.mode_summary_label.setText(f"既定候補: 動画={video} / 音声={audio}")
             return
         if self.fullhd_radio.isChecked():
-            self.mode_summary_label.setText("既定候補: 1080p 以下で最大の動画 + 最高音質")
+            self.mode_summary_label.setText(
+                f"既定候補: {describe_mode_selection('1080p', self.analysis_result)}"
+            )
             return
-        self.mode_summary_label.setText("既定候補: 最高画質の動画 + 最高音質")
+        self.mode_summary_label.setText(
+            f"既定候補: {describe_mode_selection('best', self.analysis_result)}"
+        )
 
     def _update_subtitle_summary(self) -> None:
         if not self.analysis_result or not self.analysis_result.subtitles:
@@ -609,10 +695,42 @@ class MainWindow(QMainWindow):
             self.embed_subtitle_checkbox.setChecked(False)
         self._update_subtitle_summary()
 
+    def _apply_mode_defaults(self) -> None:
+        if not self.analysis_result:
+            return
+        if self.best_radio.isChecked():
+            self.video_combo.setCurrentIndex(0)
+            self.audio_combo.setCurrentIndex(0 if self.audio_combo.count() else -1)
+        elif self.fullhd_radio.isChecked():
+            default_video = select_1080p_video(self._manual_video_candidates(self.analysis_result))
+            index = self.video_combo.findData(default_video.format_id) if default_video else -1
+            self.video_combo.setCurrentIndex(index if index >= 0 else (0 if self.video_combo.count() else -1))
+            self.audio_combo.setCurrentIndex(0 if self.audio_combo.count() else -1)
+        else:
+            if self.video_combo.currentIndex() < 0 and self.video_combo.count():
+                self.video_combo.setCurrentIndex(0)
+            if self.audio_combo.currentIndex() < 0 and self.audio_combo.count():
+                self.audio_combo.setCurrentIndex(0)
+        self._sync_manual_selection_state()
+        self._update_mode_summary()
+
+    def _open_latest_log(self) -> None:
+        log_dir = Path(__file__).resolve().parents[2] / "logs"
+        if not log_dir.exists():
+            self._show_error("ログ未作成", "ログファイルはまだ作成されていません。")
+            return
+        candidates = sorted(log_dir.glob("*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
+        if not candidates:
+            self._show_error("ログ未作成", "ログファイルはまだ作成されていません。")
+            return
+        os.startfile(candidates[0])
+
     def closeEvent(self, event: QCloseEvent) -> None:
         self._collect_settings()
         try:
             AppSettings.save(self.settings)
+            log_event(self.logger, logging.INFO, "settings_saved_on_exit")
         except Exception:
+            log_event(self.logger, logging.ERROR, "settings_save_failed_on_exit", code="settings_save_failed")
             self.logger.exception("settings_save_failed_on_exit")
         super().closeEvent(event)

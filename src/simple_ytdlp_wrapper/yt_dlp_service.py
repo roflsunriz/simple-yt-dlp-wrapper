@@ -116,7 +116,7 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
             )
 
     if not video_formats and not audio_formats:
-        raise YtDlpError("no_downloadable_formats", "非対応 URL", "ダウンロード候補が見つかりません。")
+        raise YtDlpError("no_downloadable_formats", "取得失敗", "ダウンロード候補が見つかりません。")
 
     video_formats.sort(
         key=lambda item: (item.resolution, item.bitrate, CONTAINER_PRIORITY.get(item.ext, 0)),
@@ -193,6 +193,20 @@ def select_best_audio(audio_formats: list[FormatOption]) -> FormatOption | None:
 
 def choose_subtitle(subtitles: list[SubtitleOption]) -> SubtitleOption | None:
     return subtitles[0] if subtitles else None
+
+
+def describe_mode_selection(mode: str, analysis: AnalysisResult) -> str:
+    if mode == "1080p":
+        video = select_1080p_video(analysis.video_formats)
+        audio = select_best_audio(analysis.audio_formats)
+        if video:
+            return f"動画={video.label} / 音声={audio.label if audio else 'なし'}"
+    if mode == "best":
+        video = select_best_video(analysis.video_formats)
+        audio = select_best_audio(analysis.audio_formats)
+        if video:
+            return f"動画={video.label} / 音声={audio.label if audio else 'なし'}"
+    return "-"
 
 
 def build_download_command(
@@ -383,11 +397,13 @@ def _classify_analysis_error(result: subprocess.CompletedProcess[str]) -> YtDlpE
     if "playlist" in lowered and "no-playlist" in lowered:
         return YtDlpError("playlist_unsupported", "プレイリスト未対応", text)
     if "drm" in lowered:
-        return YtDlpError("drm_protected", "非対応 URL", text)
+        return YtDlpError("drm_protected", "DRM 保護コンテンツ", text)
     if "unable to download webpage" in lowered or "timed out" in lowered or "connection" in lowered:
         return YtDlpError("network_error", "ネットワーク接続失敗", text)
     if "requested format is not available" in lowered:
         return YtDlpError("format_fetch_failed", "フォーマット取得失敗", text)
+    if "no video formats found" in lowered or "no formats" in lowered:
+        return YtDlpError("no_downloadable_formats", "取得失敗", text)
     return YtDlpError("analysis_failed", "URL分析失敗", text or "URL分析に失敗しました。")
 
 

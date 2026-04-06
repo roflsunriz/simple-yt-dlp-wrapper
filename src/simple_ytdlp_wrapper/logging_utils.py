@@ -17,3 +17,23 @@ def configure_logging() -> logging.Logger:
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
     return logger
+
+
+def log_event(
+    logger: logging.Logger,
+    level: int,
+    event: str,
+    *,
+    url: str = "",
+    code: str = "",
+    detail: str = "",
+) -> None:
+    parts = [f"event={event}"]
+    if url:
+        parts.append(f"url={url}")
+    if code:
+        parts.append(f"code={code}")
+    if detail:
+        normalized = " ".join(str(detail).splitlines()).strip()
+        parts.append(f"detail={normalized}")
+    logger.log(level, " ".join(parts))

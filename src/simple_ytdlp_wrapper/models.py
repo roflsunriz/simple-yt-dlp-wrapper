@@ -38,3 +38,14 @@ class DownloadContext:
     output_dir: Path
     basename: str
     existing_paths: set[str] = field(default_factory=set)
+
+
+@dataclass(frozen=True)
+class StateConfig:
+    url_input: bool
+    analyze: bool
+    download: bool
+    cancel: bool
+    settings: bool
+    output_controls: bool
+    mode_controls: bool

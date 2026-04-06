@@ -8,6 +8,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parents[2]
 CONFIG_PATH = APP_DIR / "settings.json"
 LOG_DIR = APP_DIR / "logs"
+WINDOWS_BIN_DIR = APP_DIR
 
 
 @dataclass
