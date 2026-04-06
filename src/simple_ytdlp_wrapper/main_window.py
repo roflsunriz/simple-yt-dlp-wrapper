@@ -31,9 +31,18 @@ from .config import AppSettings
 from .dependencies import DependencyStatus, detect_dependencies
 from .filename_utils import sanitize_file_basename
 from .logging_utils import configure_logging
-from .models import AnalysisResult
+from .models import AnalysisResult, DownloadContext, FormatOption
 from .workers import AnalysisSignals, DownloadSignals, WorkerRunnable
-from .yt_dlp_service import YtDlpError, analyze_url, build_download_command, run_download
+from .yt_dlp_service import (
+    DownloadCancelledError,
+    YtDlpError,
+    analyze_url,
+    build_download_command,
+    cleanup_cancelled_download,
+    format_bytes,
+    run_download,
+    snapshot_existing_paths,
+)
 
 
 class MainWindow(QMainWindow):
@@ -47,6 +56,7 @@ class MainWindow(QMainWindow):
         self.settings = AppSettings.load()
         self.dependencies: DependencyStatus = detect_dependencies()
         self.analysis_result: AnalysisResult | None = None
+        self.download_context: DownloadContext | None = None
         self.cancel_requested = False
         self.status_name = "初期"
 
@@ -106,6 +116,8 @@ class MainWindow(QMainWindow):
         self.audio_combo = QComboBox()
         self.container_combo = QComboBox()
         self.container_combo.addItems(["mp4", "mkv"])
+        self.video_combo.currentIndexChanged.connect(self._sync_manual_selection_state)
+        self.audio_combo.currentIndexChanged.connect(self._update_mode_summary)
         manual_layout.addWidget(QLabel("画質"), 0, 0)
         manual_layout.addWidget(self.video_combo, 0, 1)
         manual_layout.addWidget(QLabel("音質"), 1, 0)
@@ -118,10 +130,21 @@ class MainWindow(QMainWindow):
         self.subtitle_checkbox = QCheckBox("字幕をダウンロード")
         self.embed_subtitle_checkbox = QCheckBox("字幕を埋め込む")
         self.open_output_checkbox = QCheckBox("完了後に出力先を開く")
+        self.subtitle_checkbox.toggled.connect(self._handle_subtitle_toggle)
+        self.embed_subtitle_checkbox.toggled.connect(self._update_subtitle_summary)
         options_row.addWidget(self.subtitle_checkbox)
         options_row.addWidget(self.embed_subtitle_checkbox)
         options_row.addWidget(self.open_output_checkbox)
         root.addLayout(options_row)
+
+        subtitle_row = QHBoxLayout()
+        self.subtitle_summary_label = QLabel("字幕候補: なし")
+        subtitle_row.addWidget(self.subtitle_summary_label)
+        subtitle_row.addStretch(1)
+        root.addLayout(subtitle_row)
+
+        self.mode_summary_label = QLabel("既定候補: -")
+        root.addWidget(self.mode_summary_label)
 
         output_row = QHBoxLayout()
         self.output_dir_input = QLineEdit()
@@ -172,6 +195,7 @@ class MainWindow(QMainWindow):
         self.embed_subtitle_checkbox.setChecked(self.settings.embed_subtitle)
         self.open_output_checkbox.setChecked(self.settings.open_output_dir)
         self.container_combo.setCurrentText(self.settings.container)
+        self.embed_subtitle_checkbox.setEnabled(False)
         if self.settings.download_mode == "manual":
             self.manual_radio.setChecked(True)
         elif self.settings.download_mode == "1080p":
@@ -199,25 +223,39 @@ class MainWindow(QMainWindow):
         self.paste_button.setEnabled(not downloading and not analyzing)
         self.analyze_button.setEnabled(not downloading and not analyzing and self.dependencies.has_yt_dlp)
         self.cancel_button.setEnabled(downloading)
+        self.save_settings_button.setEnabled(not downloading)
+        self.browse_output_button.setEnabled(not downloading)
+        self.default_output_button.setEnabled(not downloading)
+        self.subtitle_checkbox.setEnabled(not downloading and bool(self.analysis_result and self.analysis_result.subtitles))
+        self.embed_subtitle_checkbox.setEnabled(
+            not downloading and self.subtitle_checkbox.isChecked() and bool(self.analysis_result and self.analysis_result.subtitles)
+        )
         self.download_button.setEnabled(analysis_ready and self._download_ready())
         self._update_manual_controls()
 
     def _download_ready(self) -> bool:
         if not self.analysis_result or not self.dependencies.has_yt_dlp:
             return False
-        if not Path(self.output_dir_input.text().strip()).exists():
+        output_text = self.output_dir_input.text().strip()
+        if not output_text:
+            return False
+        if not Path(output_text).exists():
             return False
         if self.manual_radio.isChecked():
-            return bool(self.video_combo.currentData())
+            selected_video = self._selected_video_option()
+            if not selected_video:
+                return False
+            if selected_video.kind == "映像専用":
+                return bool(self.audio_combo.currentData())
         return True
 
     def _update_manual_controls(self) -> None:
         enabled = self.manual_radio.isChecked() and self.status_name != "ダウンロード中"
         self.video_combo.setEnabled(enabled)
-        self.audio_combo.setEnabled(enabled)
-        self.container_combo.setEnabled(enabled)
+        self._sync_manual_selection_state()
         if self.status_name == "分析成功":
             self.download_button.setEnabled(self._download_ready())
+        self._update_mode_summary()
 
     def _paste_url(self) -> None:
         self.url_input.setText(QGuiApplication.clipboard().text().strip())
@@ -248,12 +286,10 @@ class MainWindow(QMainWindow):
         self.filename_input.setText(sanitize_file_basename(result.title))
         self._load_thumbnail(result.thumbnail_url)
         self._populate_format_combos(result)
-        has_subtitles = bool(result.subtitles)
-        self.subtitle_checkbox.setEnabled(has_subtitles)
-        self.embed_subtitle_checkbox.setEnabled(has_subtitles)
-        if not has_subtitles:
+        if not result.subtitles:
             self.subtitle_checkbox.setChecked(False)
             self.embed_subtitle_checkbox.setChecked(False)
+        self._update_subtitle_summary()
         self.status_details.setPlainText(
             "\n".join(
                 [
@@ -274,7 +310,7 @@ class MainWindow(QMainWindow):
     def _populate_format_combos(self, result: AnalysisResult) -> None:
         self.video_combo.clear()
         self.audio_combo.clear()
-        for item in result.video_formats:
+        for item in self._manual_video_candidates(result):
             self.video_combo.addItem(item.label, item.format_id)
         for item in result.audio_formats:
             self.audio_combo.addItem(item.label, item.format_id)
@@ -284,6 +320,8 @@ class MainWindow(QMainWindow):
         audio_index = self.audio_combo.findData(self.settings.audio_format_id)
         if audio_index >= 0:
             self.audio_combo.setCurrentIndex(audio_index)
+        self._sync_manual_selection_state()
+        self._update_subtitle_summary()
 
     def _load_thumbnail(self, url: str) -> None:
         self.thumbnail_label.setPixmap(QPixmap())
@@ -325,12 +363,17 @@ class MainWindow(QMainWindow):
         if not self.analysis_result:
             self._show_error("分析未完了", "URL分析を先に実行してください。")
             return
-        output_dir = Path(self.output_dir_input.text().strip())
+        output_text = self.output_dir_input.text().strip()
+        if not output_text:
+            self._show_error("出力先未指定", "ダウンロード先ディレクトリを指定してください。")
+            return
+        output_dir = Path(output_text)
         if not output_dir.exists():
             self._show_error("出力先エラー", "ダウンロード先ディレクトリが存在しません。")
             return
 
         basename = sanitize_file_basename(self.filename_input.text().strip() or self.analysis_result.title)
+        overwrite = False
         if self._output_exists(output_dir, basename):
             reply = QMessageBox.question(
                 self,
@@ -341,6 +384,7 @@ class MainWindow(QMainWindow):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
+            overwrite = True
 
         mode = "manual" if self.manual_radio.isChecked() else "1080p" if self.fullhd_radio.isChecked() else "best"
         try:
@@ -355,12 +399,18 @@ class MainWindow(QMainWindow):
                 container=self.container_combo.currentText(),
                 download_subtitle=self.subtitle_checkbox.isChecked(),
                 embed_subtitle=self.embed_subtitle_checkbox.isChecked(),
+                overwrite=overwrite,
             )
         except YtDlpError as exc:
             self._show_error("開始条件エラー", str(exc))
             return
 
         self.cancel_requested = False
+        self.download_context = DownloadContext(
+            output_dir=output_dir,
+            basename=basename,
+            existing_paths=snapshot_existing_paths(output_dir, basename),
+        )
         self.progress_bar.setValue(0)
         self.status_details.setPlainText("ダウンロード開始")
         self._set_state("ダウンロード中")
@@ -379,7 +429,11 @@ class MainWindow(QMainWindow):
                 self.dependencies,
                 on_progress=signals.progress.emit,
                 is_cancelled=lambda: self.cancel_requested,
+                on_output_path=lambda _path: None,
             )
+        except DownloadCancelledError:
+            signals.cancelled.emit()
+            return
         except Exception as exc:
             if self.cancel_requested:
                 signals.cancelled.emit()
@@ -402,12 +456,15 @@ class MainWindow(QMainWindow):
                     payload.get("step", ""),
                     f"速度: {payload.get('speed', '-')}",
                     f"ETA: {payload.get('eta', '-')}",
+                    f"ダウンロード済み: {format_bytes(payload.get('downloaded_bytes'))}",
+                    f"残り: {format_bytes(payload.get('remaining_bytes'))}",
                     payload.get("raw", ""),
                 ]
             ).strip()
         )
 
     def _handle_download_success(self) -> None:
+        self.download_context = None
         self.progress_bar.setValue(100)
         self._set_state("完了")
         self.status_details.setPlainText("ダウンロード完了")
@@ -419,8 +476,14 @@ class MainWindow(QMainWindow):
         self._show_error(summary, details)
 
     def _handle_download_cancelled(self) -> None:
+        removed = cleanup_cancelled_download(self.download_context) if self.download_context else []
+        self.download_context = None
         self._set_state("中止")
-        self.status_details.setPlainText("ダウンロードを中止しました。")
+        details = ["ダウンロードを中止しました。"]
+        if removed:
+            details.append("削除した未完成ファイル:")
+            details.extend(path.name for path in removed)
+        self.status_details.setPlainText("\n".join(details))
 
     def _cancel_download(self) -> None:
         self.cancel_requested = True
@@ -460,6 +523,65 @@ class MainWindow(QMainWindow):
     def _show_error(self, summary: str, details: str) -> None:
         self.status_details.setPlainText(f"{summary}\n{details}")
         QMessageBox.critical(self, summary, details)
+
+    def _manual_video_candidates(self, result: AnalysisResult) -> list[FormatOption]:
+        if self.dependencies.has_ffmpeg:
+            return result.video_formats
+        return [item for item in result.video_formats if item.kind != "映像専用"]
+
+    def _selected_video_option(self) -> FormatOption | None:
+        if not self.analysis_result:
+            return None
+        format_id = self.video_combo.currentData()
+        return next((item for item in self.analysis_result.video_formats if item.format_id == format_id), None)
+
+    def _sync_manual_selection_state(self) -> None:
+        manual_enabled = self.manual_radio.isChecked() and self.status_name != "ダウンロード中"
+        selected_video = self._selected_video_option()
+        needs_audio = bool(selected_video and selected_video.kind == "映像専用")
+        self.audio_combo.setEnabled(manual_enabled and needs_audio)
+        self.container_combo.setEnabled(manual_enabled and needs_audio)
+        if manual_enabled and selected_video and not needs_audio:
+            self.audio_combo.setCurrentIndex(-1)
+        if self.status_name == "分析成功":
+            self.download_button.setEnabled(self._download_ready())
+        self._update_mode_summary()
+
+    def _update_mode_summary(self) -> None:
+        if not self.analysis_result:
+            self.mode_summary_label.setText("既定候補: -")
+            return
+        if self.manual_radio.isChecked():
+            video = self.video_combo.currentText() or "-"
+            audio = self.audio_combo.currentText() if self.audio_combo.isEnabled() else "不要"
+            self.mode_summary_label.setText(f"既定候補: 動画={video} / 音声={audio}")
+            return
+        if self.fullhd_radio.isChecked():
+            self.mode_summary_label.setText("既定候補: 1080p 以下で最大の動画 + 最高音質")
+            return
+        self.mode_summary_label.setText("既定候補: 最高画質の動画 + 最高音質")
+
+    def _update_subtitle_summary(self) -> None:
+        if not self.analysis_result or not self.analysis_result.subtitles:
+            self.subtitle_summary_label.setText("字幕候補: なし")
+            return
+        parts = []
+        for item in self.analysis_result.subtitles[:5]:
+            label = f"{item.language} ({item.ext}{', 自動生成' if item.auto_generated else ''})"
+            parts.append(label)
+        prefix = "選択予定" if self.subtitle_checkbox.isChecked() else "字幕候補"
+        summary = " / ".join(parts)
+        if len(self.analysis_result.subtitles) > 5:
+            summary += " / ..."
+        self.subtitle_summary_label.setText(f"{prefix}: {summary}")
+
+    def _handle_subtitle_toggle(self, checked: bool) -> None:
+        self.embed_subtitle_checkbox.setEnabled(
+            checked and self.status_name != "ダウンロード中" and bool(self.analysis_result and self.analysis_result.subtitles)
+        )
+        if not checked:
+            self.embed_subtitle_checkbox.setChecked(False)
+        self._update_subtitle_summary()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._collect_settings()

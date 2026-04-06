@@ -3,21 +3,37 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
 from .dependencies import DependencyStatus
 from .filename_utils import sanitize_file_basename
-from .models import AnalysisResult, FormatOption, SubtitleOption
+from .models import AnalysisResult, DownloadContext, FormatOption, SubtitleOption
 
 
 THUMBNAIL_URL_RE = re.compile(r"(?P<url>https?://\S+)$")
 DOWNLOAD_PROGRESS_RE = re.compile(
-    r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%.*?at\s+(?P<speed>\S+).*?ETA\s+(?P<eta>\S+)"
+    r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%\s+of\s+~?(?P<total>\S+)(?:\s+at\s+(?P<speed>\S+)\s+ETA\s+(?P<eta>\S+))?"
 )
+DESTINATION_RE = re.compile(r"^\[download\]\s+Destination:\s+(?P<path>.+)$")
+MERGER_RE = re.compile(r"^\[Merger\]\s+Merging formats into\s+\"(?P<path>.+)\"$")
+ALREADY_DOWNLOADED_RE = re.compile(r"^\[download\]\s+(?P<path>.+?) has already been downloaded$")
+UNIT_FACTORS = {
+    "B": 1,
+    "KiB": 1024,
+    "MiB": 1024**2,
+    "GiB": 1024**3,
+    "TiB": 1024**4,
+}
+CONTAINER_PRIORITY = {"mp4": 3, "m4a": 3, "mkv": 2, "webm": 1}
 
 
 class YtDlpError(RuntimeError):
+    pass
+
+
+class DownloadCancelledError(YtDlpError):
     pass
 
 
@@ -74,6 +90,8 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
                     resolution=height,
                     bitrate=bitrate,
                     kind=kind,
+                    has_audio=acodec != "none",
+                    has_video=True,
                 )
             )
         if acodec != "none":
@@ -87,13 +105,18 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
                     resolution=0,
                     bitrate=bitrate,
                     kind=kind,
+                    has_audio=True,
+                    has_video=vcodec != "none",
                 )
             )
 
     if not video_formats and not audio_formats:
         raise YtDlpError("ダウンロード候補が見つかりません。")
 
-    video_formats.sort(key=lambda item: (item.resolution, item.bitrate), reverse=True)
+    video_formats.sort(
+        key=lambda item: (item.resolution, item.bitrate, CONTAINER_PRIORITY.get(item.ext, 0)),
+        reverse=True,
+    )
     audio_formats.sort(key=lambda item: item.bitrate, reverse=True)
 
     return AnalysisResult(
@@ -178,8 +201,10 @@ def build_download_command(
     container: str,
     download_subtitle: bool,
     embed_subtitle: bool,
+    overwrite: bool,
 ) -> list[str]:
-    command = [dependencies.yt_dlp_path, "--newline", "-P", output_dir]
+    command = [dependencies.yt_dlp_path, "--newline", "--no-playlist", "-P", output_dir]
+    command.append("--force-overwrites" if overwrite else "--no-overwrites")
     command.extend(["-o", f"{sanitize_file_basename(file_basename or analysis.title)}.%(ext)s"])
 
     if mode == "best":
@@ -215,7 +240,13 @@ def build_download_command(
     return command
 
 
-def run_download(command: list[str], dependencies: DependencyStatus, on_progress, is_cancelled) -> None:
+def run_download(
+    command: list[str],
+    dependencies: DependencyStatus,
+    on_progress,
+    is_cancelled,
+    on_output_path=None,
+) -> None:
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -229,9 +260,19 @@ def run_download(command: list[str], dependencies: DependencyStatus, on_progress
         for raw_line in process.stdout or []:
             if is_cancelled():
                 process.terminate()
-                process.wait(timeout=5)
-                return
-            progress = _parse_progress_line(raw_line.strip())
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                raise DownloadCancelledError("ダウンロードを中止しました。")
+
+            line = raw_line.strip()
+            output_path = _extract_output_path(line)
+            if output_path and on_output_path:
+                on_output_path(output_path)
+
+            progress = _parse_progress_line(line)
             if progress:
                 on_progress(progress)
         return_code = process.wait()
@@ -246,13 +287,82 @@ def run_download(command: list[str], dependencies: DependencyStatus, on_progress
 def _parse_progress_line(line: str) -> dict | None:
     match = DOWNLOAD_PROGRESS_RE.search(line)
     if match:
+        percent = float(match.group("percent"))
+        total_bytes = _parse_size_to_bytes(match.group("total"))
+        downloaded_bytes = int(total_bytes * percent / 100) if total_bytes is not None else None
+        remaining_bytes = (
+            max(total_bytes - downloaded_bytes, 0)
+            if total_bytes is not None and downloaded_bytes is not None
+            else None
+        )
         return {
-            "percent": float(match.group("percent")),
-            "speed": match.group("speed"),
-            "eta": match.group("eta"),
+            "percent": percent,
+            "speed": match.group("speed") or "",
+            "eta": match.group("eta") or "",
+            "total_bytes": total_bytes,
+            "downloaded_bytes": downloaded_bytes,
+            "remaining_bytes": remaining_bytes,
             "step": "ダウンロード中",
             "raw": line,
         }
     if line:
-        return {"percent": None, "speed": "", "eta": "", "step": line, "raw": line}
+        return {
+            "percent": None,
+            "speed": "",
+            "eta": "",
+            "total_bytes": None,
+            "downloaded_bytes": None,
+            "remaining_bytes": None,
+            "step": line,
+            "raw": line,
+        }
     return None
+
+
+def _parse_size_to_bytes(text: str) -> int | None:
+    match = re.fullmatch(r"(?P<value>\d+(?:\.\d+)?)(?P<unit>[KMGTP]?i?B)", text)
+    if not match:
+        return None
+    return int(float(match.group("value")) * UNIT_FACTORS[match.group("unit")])
+
+
+def format_bytes(num_bytes: int | None) -> str:
+    if num_bytes is None:
+        return "-"
+    size = float(num_bytes)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if size < 1024 or unit == "TiB":
+            return f"{size:.1f}{unit}" if unit != "B" else f"{int(size)}B"
+        size /= 1024
+    return "-"
+
+
+def _extract_output_path(line: str) -> str | None:
+    for pattern in (DESTINATION_RE, MERGER_RE, ALREADY_DOWNLOADED_RE):
+        match = pattern.match(line)
+        if match:
+            return match.group("path")
+    return None
+
+
+def snapshot_existing_paths(output_dir: Path, basename: str) -> set[str]:
+    return {str(path.resolve()) for path in output_dir.glob(f"{basename}*") if path.exists()}
+
+
+def cleanup_cancelled_download(context: DownloadContext) -> list[Path]:
+    removed: list[Path] = []
+    for path in context.output_dir.glob(f"{context.basename}*"):
+        resolved = str(path.resolve())
+        if resolved in context.existing_paths:
+            continue
+        if not path.exists():
+            continue
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            removed.append(path)
+        except OSError:
+            continue
+    return removed

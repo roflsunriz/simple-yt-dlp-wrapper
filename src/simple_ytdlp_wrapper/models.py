@@ -11,6 +11,8 @@ class FormatOption:
     resolution: int
     bitrate: float
     kind: str
+    has_audio: bool = False
+    has_video: bool = False
 
 
 @dataclass
@@ -29,3 +31,10 @@ class AnalysisResult:
     audio_formats: list[FormatOption] = field(default_factory=list)
     subtitles: list[SubtitleOption] = field(default_factory=list)
     original_url: str = ""
+
+
+@dataclass
+class DownloadContext:
+    output_dir: Path
+    basename: str
+    existing_paths: set[str] = field(default_factory=set)
