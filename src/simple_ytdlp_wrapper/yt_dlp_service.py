@@ -30,11 +30,16 @@ CONTAINER_PRIORITY = {"mp4": 3, "m4a": 3, "mkv": 2, "webm": 1}
 
 
 class YtDlpError(RuntimeError):
-    pass
+    def __init__(self, code: str, summary: str, details: str = "") -> None:
+        super().__init__(details or summary)
+        self.code = code
+        self.summary = summary
+        self.details = details or summary
 
 
 class DownloadCancelledError(YtDlpError):
-    pass
+    def __init__(self, details: str = "ダウンロードを中止しました。") -> None:
+        super().__init__("download_cancelled", "ダウンロード中止", details)
 
 
 def _build_env(ffmpeg_path: str | None) -> dict[str, str]:
@@ -58,18 +63,18 @@ def _run_command(command: list[str], ffmpeg_path: str | None = None) -> subproce
 
 def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
     if not dependencies.has_yt_dlp:
-        raise YtDlpError("yt-dlp が見つかりません。")
+        raise YtDlpError("missing_yt_dlp", "yt-dlp 未検出", "yt-dlp が見つかりません。")
 
     result = _run_command(
         [dependencies.yt_dlp_path, "--no-playlist", "-J", "--simulate", url],
         dependencies.ffmpeg_path,
     )
     if result.returncode != 0:
-        raise YtDlpError(result.stderr.strip() or "URL分析に失敗しました。")
+        raise _classify_analysis_error(result)
 
     payload = json.loads(result.stdout)
     if payload.get("_type") == "playlist":
-        raise YtDlpError("プレイリスト URL は未対応です。")
+        raise YtDlpError("playlist_unsupported", "プレイリスト未対応", "プレイリスト URL は未対応です。")
 
     formats = payload.get("formats") or []
     video_formats: list[FormatOption] = []
@@ -111,7 +116,7 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
             )
 
     if not video_formats and not audio_formats:
-        raise YtDlpError("ダウンロード候補が見つかりません。")
+        raise YtDlpError("no_downloadable_formats", "非対応 URL", "ダウンロード候補が見つかりません。")
 
     video_formats.sort(
         key=lambda item: (item.resolution, item.bitrate, CONTAINER_PRIORITY.get(item.ext, 0)),
@@ -218,13 +223,13 @@ def build_download_command(
         audio = next((item for item in analysis.audio_formats if item.format_id == audio_format_id), None)
 
     if not video:
-        raise YtDlpError("動画フォーマットを選択できません。")
+        raise YtDlpError("format_selection_invalid", "フォーマット取得失敗", "動画フォーマットを選択できません。")
 
     if video.kind == "映像専用":
         if not audio:
-            raise YtDlpError("音声フォーマットを選択できません。")
+            raise YtDlpError("format_selection_invalid", "フォーマット取得失敗", "音声フォーマットを選択できません。")
         if not dependencies.has_ffmpeg:
-            raise YtDlpError("ffmpeg が見つからないためマージできません。")
+            raise YtDlpError("missing_ffmpeg", "ffmpeg 未検出", "ffmpeg が見つからないためマージできません。")
         command.extend(["-f", f"{video.format_id}+{audio.format_id}", "--merge-output-format", container])
     else:
         command.extend(["-f", video.format_id])
@@ -235,6 +240,8 @@ def build_download_command(
             command.extend(["--write-subs", "--sub-langs", subtitle.language, "--convert-subs", subtitle.ext])
             if embed_subtitle:
                 command.append("--embed-subs")
+        else:
+            raise YtDlpError("subtitle_unavailable", "字幕取得失敗", "利用可能な字幕が見つかりません。")
 
     command.append(analysis.original_url)
     return command
@@ -281,7 +288,7 @@ def run_download(
             process.kill()
 
     if return_code != 0:
-        raise YtDlpError("ダウンロードに失敗しました。")
+        raise _classify_download_error(command, return_code)
 
 
 def _parse_progress_line(line: str) -> dict | None:
@@ -366,3 +373,34 @@ def cleanup_cancelled_download(context: DownloadContext) -> list[Path]:
         except OSError:
             continue
     return removed
+
+
+def _classify_analysis_error(result: subprocess.CompletedProcess[str]) -> YtDlpError:
+    text = _merge_error_text(result)
+    lowered = text.lower()
+    if "unsupported url" in lowered or "no suitable extractor" in lowered:
+        return YtDlpError("unsupported_url", "非対応 URL", text)
+    if "playlist" in lowered and "no-playlist" in lowered:
+        return YtDlpError("playlist_unsupported", "プレイリスト未対応", text)
+    if "drm" in lowered:
+        return YtDlpError("drm_protected", "非対応 URL", text)
+    if "unable to download webpage" in lowered or "timed out" in lowered or "connection" in lowered:
+        return YtDlpError("network_error", "ネットワーク接続失敗", text)
+    if "requested format is not available" in lowered:
+        return YtDlpError("format_fetch_failed", "フォーマット取得失敗", text)
+    return YtDlpError("analysis_failed", "URL分析失敗", text or "URL分析に失敗しました。")
+
+
+def _classify_download_error(command: list[str], return_code: int) -> YtDlpError:
+    stderr = f"yt-dlp exited with code {return_code}"
+    command_text = " ".join(command)
+    lowered = command_text.lower()
+    if "--write-subs" in lowered:
+        return YtDlpError("subtitle_download_failed", "字幕取得失敗", stderr)
+    if "--merge-output-format" in lowered:
+        return YtDlpError("merge_failed", "マージ失敗", stderr)
+    return YtDlpError("download_failed", "ダウンロード失敗", stderr)
+
+
+def _merge_error_text(result: subprocess.CompletedProcess[str]) -> str:
+    return "\n".join(part.strip() for part in (result.stderr, result.stdout) if part and part.strip())

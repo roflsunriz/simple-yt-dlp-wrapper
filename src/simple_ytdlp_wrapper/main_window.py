@@ -280,6 +280,9 @@ class MainWindow(QMainWindow):
     def _run_analysis(self, url: str, signals: AnalysisSignals) -> None:
         try:
             signals.finished.emit(analyze_url(url, self.dependencies))
+        except YtDlpError as exc:
+            self.logger.warning("analysis_failed code=%s url=%s detail=%s", exc.code, url, exc.details)
+            signals.failed.emit(exc.summary, exc.details)
         except Exception as exc:
             self.logger.exception("analysis_failed url=%s", url)
             signals.failed.emit("URL分析失敗", str(exc))
@@ -407,7 +410,13 @@ class MainWindow(QMainWindow):
                 overwrite=overwrite,
             )
         except YtDlpError as exc:
-            self._show_error("開始条件エラー", str(exc))
+            self.logger.warning(
+                "download_precheck_failed code=%s url=%s detail=%s",
+                exc.code,
+                self.analysis_result.original_url,
+                exc.details,
+            )
+            self._show_error(exc.summary, exc.details)
             return
 
         self.cancel_requested = False
@@ -438,6 +447,18 @@ class MainWindow(QMainWindow):
             )
         except DownloadCancelledError:
             signals.cancelled.emit()
+            return
+        except YtDlpError as exc:
+            if self.cancel_requested:
+                signals.cancelled.emit()
+                return
+            self.logger.warning(
+                "download_failed code=%s url=%s detail=%s",
+                exc.code,
+                self.analysis_result.original_url if self.analysis_result else "",
+                exc.details,
+            )
+            signals.failed.emit(exc.summary, exc.details)
             return
         except Exception as exc:
             if self.cancel_requested:
