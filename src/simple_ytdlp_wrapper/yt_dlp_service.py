@@ -55,6 +55,18 @@ def _build_env(ffmpeg_path: str | None) -> dict[str, str]:
     return env
 
 
+def _build_windows_process_kwargs() -> dict[str, object]:
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "startupinfo": startupinfo,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+    }
+
+
 def _run_command(command: list[str], ffmpeg_path: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
@@ -64,6 +76,7 @@ def _run_command(command: list[str], ffmpeg_path: str | None = None) -> subproce
         errors="replace",
         env=_build_env(ffmpeg_path),
         check=False,
+        **_build_windows_process_kwargs(),
     )
 
 
@@ -283,6 +296,7 @@ def run_download(
         encoding="utf-8",
         errors="replace",
         env=_build_env(dependencies.ffmpeg_path),
+        **_build_windows_process_kwargs(),
     )
     try:
         for raw_line in process.stdout or []:
