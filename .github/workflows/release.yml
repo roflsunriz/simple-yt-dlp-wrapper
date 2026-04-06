@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag (example: v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: meta
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag_name }}"
+          } else {
+            $tag = "${{ github.ref_name }}"
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build distributable
+        run: pyinstaller --clean --noconfirm app.spec
+
+      - name: Archive release bundle
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $archive = "dist/simple-yt-dlp-wrapper-$tag-windows-x64.zip"
+          if (Test-Path $archive) {
+            Remove-Item -LiteralPath $archive -Force
+          }
+          Compress-Archive -Path "dist/simple-yt-dlp-wrapper/*" -DestinationPath $archive
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: simple-yt-dlp-wrapper-${{ steps.meta.outputs.tag }}-windows-x64
+          path: dist/simple-yt-dlp-wrapper-${{ steps.meta.outputs.tag }}-windows-x64.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: dist/simple-yt-dlp-wrapper-${{ steps.meta.outputs.tag }}-windows-x64.zip

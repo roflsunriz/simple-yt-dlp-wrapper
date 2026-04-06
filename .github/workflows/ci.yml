@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Compile sources
+        run: python -m compileall app.pyw src
+
+      - name: Import smoke test
+        run: |
+          python -c "from src.simple_ytdlp_wrapper.app import main; print(callable(main))"
+          python -c "from src.simple_ytdlp_wrapper.dependencies import detect_dependencies; print(detect_dependencies())"
+
+      - name: Build distributable
+        if: matrix.python-version == '3.11'
+        run: pyinstaller --clean --noconfirm app.spec
+
+      - name: Upload build artifact
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: simple-yt-dlp-wrapper-ci
+          path: dist/simple-yt-dlp-wrapper
+          if-no-files-found: error

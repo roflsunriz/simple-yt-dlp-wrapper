@@ -9,12 +9,18 @@ from PyInstaller.utils.win32.versioninfo import (
     VarFileInfo,
     VarStruct,
 )
+from pathlib import Path
+import re
 
 app_name = 'simple-yt-dlp-wrapper'
+version_source = Path("src/simple_ytdlp_wrapper/__init__.py").read_text(encoding="utf-8")
+match = re.search(r'__version__ = "([^"]+)"', version_source)
+version = match.group(1) if match else "0.1.0"
+version_parts = tuple(int(part) for part in version.split(".")) + (0,) * (4 - len(version.split(".")))
 version_info = VSVersionInfo(
     ffi=FixedFileInfo(
-        filevers=(1, 0, 0, 0),
-        prodvers=(1, 0, 0, 0),
+        filevers=version_parts[:4],
+        prodvers=version_parts[:4],
         mask=0x3F,
         flags=0x0,
         OS=0x40004,
@@ -30,11 +36,11 @@ version_info = VSVersionInfo(
                     [
                         StringStruct('CompanyName', 'simple-yt-dlp-wrapper'),
                         StringStruct('FileDescription', 'simple-yt-dlp-wrapper'),
-                        StringStruct('FileVersion', '1.0.0.0'),
+                        StringStruct('FileVersion', version),
                         StringStruct('InternalName', app_name),
                         StringStruct('OriginalFilename', f'{app_name}.exe'),
                         StringStruct('ProductName', 'simple-yt-dlp-wrapper'),
-                        StringStruct('ProductVersion', '1.0.0.0'),
+                        StringStruct('ProductVersion', version),
                     ],
                 )
             ]
@@ -47,7 +53,7 @@ a = Analysis(
     ['app.pyw'],
     pathex=[],
     binaries=[],
-    datas=[('resources/icon.ico', 'resources')],
+    datas=[('resources/icon.ico', 'resources'), ('LICENSE', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
