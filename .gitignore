@@ -6,4 +6,3 @@ logs/
 # pyinstaller
 dist/
 build/
-*.spec

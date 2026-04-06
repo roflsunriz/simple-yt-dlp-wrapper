@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
 APP_DIR = Path(__file__).resolve().parents[2]
+RESOURCES_DIR = APP_DIR / "resources"
 CONFIG_PATH = APP_DIR / "settings.json"
 LOG_DIR = APP_DIR / "logs"
 WINDOWS_BIN_DIR = APP_DIR
+
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    RESOURCES_DIR = APP_DIR / "resources"
+    CONFIG_PATH = APP_DIR / "settings.json"
+    LOG_DIR = APP_DIR / "logs"
+    WINDOWS_BIN_DIR = APP_DIR
 
 
 @dataclass
