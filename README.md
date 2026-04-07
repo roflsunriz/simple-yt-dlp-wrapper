@@ -33,6 +33,14 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+`yt-dlp` と `ffmpeg` を `winget` で導入する場合は、同梱のセットアップスクリプトも使えます。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup-scripts\install-dependencies.ps1
+```
+
+このスクリプトは `winget install Gyan.FFMpeg` と `winget install yt-dlp.yt-dlp` を順に実行します。`winget` が利用できる Windows 環境で実行してください。
+
 ## 開発時の起動
 
 ```powershell
