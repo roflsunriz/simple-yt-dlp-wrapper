@@ -1,0 +1,1 @@
+winget install Gyan.FFMpeg;winget install yt-dlp.yt-dlp

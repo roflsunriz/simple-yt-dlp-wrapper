@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TypedDict
 
 from .dependencies import DependencyStatus
 from .filename_utils import sanitize_file_basename
@@ -27,6 +28,11 @@ UNIT_FACTORS = {
     "TiB": 1024**4,
 }
 CONTAINER_PRIORITY = {"mp4": 3, "m4a": 3, "mkv": 2, "webm": 1}
+
+
+class WindowsProcessKwargs(TypedDict, total=False):
+    startupinfo: subprocess.STARTUPINFO
+    creationflags: int
 
 
 class YtDlpError(RuntimeError):
@@ -55,7 +61,7 @@ def _build_env(ffmpeg_path: str | None) -> dict[str, str]:
     return env
 
 
-def _build_windows_process_kwargs() -> dict[str, object]:
+def _build_windows_process_kwargs() -> WindowsProcessKwargs:
     if os.name != "nt":
         return {}
     startupinfo = subprocess.STARTUPINFO()
