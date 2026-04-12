@@ -226,11 +226,15 @@ def describe_mode_selection(mode: str, analysis: AnalysisResult) -> str:
         audio = select_best_audio(analysis.audio_formats)
         if video:
             return f"動画={video.label} / 音声={audio.label if audio else 'なし'}"
+        if audio:
+            return f"動画=なし / 音声={audio.label}"
     if mode == "best":
         video = select_best_video(analysis.video_formats)
         audio = select_best_audio(analysis.audio_formats)
         if video:
             return f"動画={video.label} / 音声={audio.label if audio else 'なし'}"
+        if audio:
+            return f"動画=なし / 音声={audio.label}"
     return "-"
 
 
@@ -262,17 +266,21 @@ def build_download_command(
         video = next((item for item in analysis.video_formats if item.format_id == video_format_id), None)
         audio = next((item for item in analysis.audio_formats if item.format_id == audio_format_id), None)
 
-    if not video:
-        raise YtDlpError("format_selection_invalid", "フォーマット取得失敗", "動画フォーマットを選択できません。")
+    if not video and not audio:
+        raise YtDlpError(
+            "format_selection_invalid",
+            "フォーマット取得失敗",
+            "ダウンロード可能なフォーマットを選択できません。",
+        )
 
-    if video.kind == "映像専用":
-        if not audio:
-            raise YtDlpError("format_selection_invalid", "フォーマット取得失敗", "音声フォーマットを選択できません。")
+    if video and video.kind == "映像専用" and audio:
         if not dependencies.has_ffmpeg:
             raise YtDlpError("missing_ffmpeg", "ffmpeg 未検出", "ffmpeg が見つからないためマージできません。")
         command.extend(["-f", f"{video.format_id}+{audio.format_id}", "--merge-output-format", container])
-    else:
+    elif video:
         command.extend(["-f", video.format_id])
+    else:
+        command.extend(["-f", audio.format_id])
 
     if download_subtitle:
         subtitle = choose_subtitle(analysis.subtitles)

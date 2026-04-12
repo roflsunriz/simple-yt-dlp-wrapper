@@ -278,10 +278,9 @@ class MainWindow(QMainWindow):
             return False
         if self.manual_radio.isChecked():
             selected_video = self._selected_video_option()
-            if not selected_video:
+            selected_audio = self.audio_combo.currentData()
+            if not selected_video and not selected_audio:
                 return False
-            if selected_video.kind == "映像専用":
-                return bool(self.audio_combo.currentData())
         return True
 
     def _update_manual_controls(self) -> None:
@@ -637,9 +636,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, summary, details)
 
     def _manual_video_candidates(self, result: AnalysisResult) -> list[FormatOption]:
-        if self.dependencies.has_ffmpeg:
-            return result.video_formats
-        return [item for item in result.video_formats if item.kind != "映像専用"]
+        return result.video_formats
 
     def _selected_video_option(self) -> FormatOption | None:
         if not self.analysis_result:
@@ -650,10 +647,17 @@ class MainWindow(QMainWindow):
     def _sync_manual_selection_state(self) -> None:
         manual_enabled = self.manual_radio.isChecked() and self.status_name != "ダウンロード中"
         selected_video = self._selected_video_option()
-        needs_audio = bool(selected_video and selected_video.kind == "映像専用")
-        self.audio_combo.setEnabled(manual_enabled and needs_audio)
-        self.container_combo.setEnabled(manual_enabled and needs_audio)
-        if manual_enabled and selected_video and not needs_audio:
+        allow_audio_merge = bool(
+            manual_enabled
+            and selected_video
+            and selected_video.kind == "映像専用"
+            and self.dependencies.has_ffmpeg
+            and self.audio_combo.count()
+        )
+        allow_audio_only = bool(manual_enabled and not selected_video and self.audio_combo.count())
+        self.audio_combo.setEnabled(allow_audio_merge or allow_audio_only)
+        self.container_combo.setEnabled(allow_audio_merge)
+        if manual_enabled and selected_video and not allow_audio_merge:
             self.audio_combo.setCurrentIndex(-1)
         if self.status_name == "分析成功":
             self.download_button.setEnabled(self._download_ready())
