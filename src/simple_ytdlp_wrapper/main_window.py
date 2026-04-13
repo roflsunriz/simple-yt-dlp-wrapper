@@ -45,6 +45,7 @@ from .yt_dlp_service import (
     format_bytes,
     run_download,
     select_1080p_video,
+    select_manual_defaults,
     snapshot_existing_paths,
 )
 
@@ -715,10 +716,11 @@ class MainWindow(QMainWindow):
             self.video_combo.setCurrentIndex(index if index >= 0 else (0 if self.video_combo.count() else -1))
             self.audio_combo.setCurrentIndex(0 if self.audio_combo.count() else -1)
         else:
-            if self.video_combo.currentIndex() < 0 and self.video_combo.count():
-                self.video_combo.setCurrentIndex(0)
-            if self.audio_combo.currentIndex() < 0 and self.audio_combo.count():
-                self.audio_combo.setCurrentIndex(0)
+            default_video, default_audio = select_manual_defaults(self.analysis_result)
+            video_index = self.video_combo.findData(default_video.format_id) if default_video else -1
+            audio_index = self.audio_combo.findData(default_audio.format_id) if default_audio else -1
+            self.video_combo.setCurrentIndex(video_index if video_index >= 0 else (0 if self.video_combo.count() else -1))
+            self.audio_combo.setCurrentIndex(audio_index if audio_index >= 0 else -1)
         self._sync_manual_selection_state()
         self._update_mode_summary()
 

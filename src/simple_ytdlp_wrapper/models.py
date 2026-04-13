@@ -12,6 +12,8 @@ class FormatOption:
     resolution: int
     bitrate: float
     kind: str
+    language: str = ""
+    audio_role: str = ""
     has_audio: bool = False
     has_video: bool = False
 
@@ -32,6 +34,7 @@ class AnalysisResult:
     audio_formats: list[FormatOption] = field(default_factory=list)
     subtitles: list[SubtitleOption] = field(default_factory=list)
     original_url: str = ""
+    original_audio_language: str = ""
 
 
 @dataclass

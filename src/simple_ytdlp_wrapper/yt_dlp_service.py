@@ -48,6 +48,119 @@ class DownloadCancelledError(YtDlpError):
         super().__init__("download_cancelled", "ダウンロード中止", details)
 
 
+def _base_language(language: str) -> str:
+    return language.split("-", 1)[0].lower() if language else ""
+
+
+def _is_original_audio(item: dict) -> bool:
+    format_note = str(item.get("format_note") or "").lower()
+    return "original" in format_note
+
+
+def _detect_original_audio_language(formats: list[dict]) -> str:
+    for item in formats:
+        if item.get("acodec", "none") == "none":
+            continue
+        if _is_original_audio(item):
+            return str(item.get("language") or "")
+    return ""
+
+
+def _classify_audio_role(language: str, is_original: bool, original_audio_language: str) -> str:
+    if is_original:
+        return "original"
+    if language and original_audio_language and _base_language(language) != _base_language(original_audio_language):
+        return "dubbed"
+    return ""
+
+
+def _build_audio_label(language: str, audio_role: str) -> str:
+    if not language:
+        return ""
+    if audio_role == "original":
+        return f"{language} | オリジナル音声"
+    if audio_role == "dubbed":
+        return f"{language} | 自動吹き替え"
+    return language
+
+
+def _audio_priority(item: FormatOption, original_audio_language: str) -> int:
+    language = _base_language(item.language)
+    original_language = _base_language(original_audio_language)
+    is_dubbed = item.audio_role == "dubbed"
+
+    if item.audio_role == "original":
+        category = 0
+    elif language == "ja":
+        category = 2 if is_dubbed else 1
+    elif language == "en":
+        category = 4 if is_dubbed else 3
+    elif language and language == original_language:
+        category = 5
+    elif language:
+        category = 6
+    else:
+        category = 7
+
+    return category
+
+
+def _mode_video_priority(mode: str, video: FormatOption | None) -> tuple[int, int, float, int]:
+    if not video:
+        return (2, 0, 0.0, 0)
+    if mode == "1080p":
+        if video.resolution and video.resolution <= 1080:
+            return (0, -video.resolution, -video.bitrate, -CONTAINER_PRIORITY.get(video.ext, 0))
+        if video.resolution:
+            return (1, video.resolution, -video.bitrate, -CONTAINER_PRIORITY.get(video.ext, 0))
+        return (2, 0, -video.bitrate, -CONTAINER_PRIORITY.get(video.ext, 0))
+    return (0, -video.resolution, -video.bitrate, -CONTAINER_PRIORITY.get(video.ext, 0))
+
+
+def _candidate_sort_key(
+    mode: str,
+    video: FormatOption | None,
+    audio: FormatOption | None,
+    original_audio_language: str,
+) -> tuple[int, int, int, int, float, int, float, int]:
+    audio_source = audio or video
+    assert audio_source is not None
+    merged_rank = 0 if video and audio else 1 if video else 2
+    return (
+        _audio_priority(audio_source, original_audio_language),
+        merged_rank,
+        *_mode_video_priority(mode, video),
+        -audio_source.bitrate,
+        -CONTAINER_PRIORITY.get(audio_source.ext, 0),
+    )
+
+
+def _auto_select_formats(
+    analysis: AnalysisResult,
+    mode: str,
+    allow_merge: bool,
+) -> tuple[FormatOption | None, FormatOption | None]:
+    candidates: list[tuple[FormatOption | None, FormatOption | None]] = []
+
+    integrated_videos = [item for item in analysis.video_formats if item.has_audio]
+    video_only_formats = [item for item in analysis.video_formats if not item.has_audio]
+    audio_only_formats = [item for item in analysis.audio_formats if not item.has_video]
+
+    candidates.extend((video, None) for video in integrated_videos)
+    if allow_merge:
+        candidates.extend((video, audio) for video in video_only_formats for audio in audio_only_formats)
+    if not candidates:
+        candidates.extend((None, audio) for audio in audio_only_formats)
+
+    if not candidates:
+        return None, None
+
+    return min(
+        candidates,
+        key=lambda items: _candidate_sort_key(mode, items[0], items[1], analysis.original_audio_language),
+    )
+
+
 def _require_yt_dlp_path(dependencies: DependencyStatus) -> str:
     if not dependencies.yt_dlp_path:
         raise YtDlpError("missing_yt_dlp", "yt-dlp 未検出", "yt-dlp が見つかりません。")
@@ -101,6 +214,7 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
         raise YtDlpError("playlist_unsupported", "プレイリスト未対応", "プレイリスト URL は未対応です。")
 
     formats = payload.get("formats") or []
+    original_audio_language = _detect_original_audio_language(formats)
     video_formats: list[FormatOption] = []
     audio_formats: list[FormatOption] = []
     for item in formats:
@@ -109,33 +223,46 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
         ext = item.get("ext", "")
         height = int(item.get("height") or 0)
         bitrate = float(item.get("tbr") or item.get("abr") or 0.0)
+        language = str(item.get("language") or "")
+        audio_role = _classify_audio_role(language, _is_original_audio(item), original_audio_language)
+        audio_label = _build_audio_label(language, audio_role)
         if vcodec != "none":
             kind = "統合済み" if acodec != "none" else "映像専用"
+            label_parts = [str(item.get("format_id", "")), f"{height or '?'}p", ext, kind]
+            if acodec != "none" and audio_label:
+                label_parts.append(audio_label)
             video_formats.append(
                 FormatOption(
                     format_id=item.get("format_id", ""),
-                    label=f"{item.get('format_id')} | {height or '?'}p | {ext} | {kind}",
+                    label=" | ".join(label_parts),
                     ext=ext,
                     resolution=height,
                     bitrate=bitrate,
                     kind=kind,
+                    language=language,
+                    audio_role=audio_role,
                     has_audio=acodec != "none",
                     has_video=True,
                 )
             )
-        if acodec != "none":
+        if acodec != "none" and vcodec == "none":
             abr = int(item.get("abr") or bitrate or 0)
-            kind = "統合済み" if vcodec != "none" else "音声専用"
+            kind = "音声専用"
+            label_parts = [str(item.get("format_id", "")), f"{abr}kbps", ext, kind]
+            if audio_label:
+                label_parts.append(audio_label)
             audio_formats.append(
                 FormatOption(
                     format_id=item.get("format_id", ""),
-                    label=f"{item.get('format_id')} | {abr}kbps | {ext} | {kind}",
+                    label=" | ".join(label_parts),
                     ext=ext,
                     resolution=0,
                     bitrate=bitrate,
                     kind=kind,
+                    language=language,
+                    audio_role=audio_role,
                     has_audio=True,
-                    has_video=vcodec != "none",
+                    has_video=False,
                 )
             )
 
@@ -156,6 +283,7 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
         audio_formats=audio_formats,
         subtitles=_extract_subtitles(payload),
         original_url=url,
+        original_audio_language=original_audio_language,
     )
 
 
@@ -216,21 +344,23 @@ def select_best_audio(audio_formats: list[FormatOption]) -> FormatOption | None:
     return audio_formats[0] if audio_formats else None
 
 
+def select_manual_defaults(analysis: AnalysisResult) -> tuple[FormatOption | None, FormatOption | None]:
+    return _auto_select_formats(analysis, "best", allow_merge=True)
+
+
 def choose_subtitle(subtitles: list[SubtitleOption]) -> SubtitleOption | None:
     return subtitles[0] if subtitles else None
 
 
 def describe_mode_selection(mode: str, analysis: AnalysisResult) -> str:
     if mode == "1080p":
-        video = select_1080p_video(analysis.video_formats)
-        audio = select_best_audio(analysis.audio_formats)
+        video, audio = _auto_select_formats(analysis, "1080p", allow_merge=True)
         if video:
             return f"動画={video.label} / 音声={audio.label if audio else 'なし'}"
         if audio:
             return f"動画=なし / 音声={audio.label}"
     if mode == "best":
-        video = select_best_video(analysis.video_formats)
-        audio = select_best_audio(analysis.audio_formats)
+        video, audio = _auto_select_formats(analysis, "best", allow_merge=True)
         if video:
             return f"動画={video.label} / 音声={audio.label if audio else 'なし'}"
         if audio:
@@ -257,11 +387,9 @@ def build_download_command(
     command.extend(["-o", f"{sanitize_file_basename(file_basename or analysis.title)}.%(ext)s"])
 
     if mode == "best":
-        video = select_best_video(analysis.video_formats)
-        audio = select_best_audio(analysis.audio_formats)
+        video, audio = _auto_select_formats(analysis, "best", allow_merge=dependencies.has_ffmpeg)
     elif mode == "1080p":
-        video = select_1080p_video(analysis.video_formats)
-        audio = select_best_audio(analysis.audio_formats)
+        video, audio = _auto_select_formats(analysis, "1080p", allow_merge=dependencies.has_ffmpeg)
     else:
         video = next((item for item in analysis.video_formats if item.format_id == video_format_id), None)
         audio = next((item for item in analysis.audio_formats if item.format_id == audio_format_id), None)
