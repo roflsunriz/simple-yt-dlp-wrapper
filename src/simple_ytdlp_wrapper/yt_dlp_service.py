@@ -280,6 +280,7 @@ def build_download_command(
     elif video:
         command.extend(["-f", video.format_id])
     else:
+        assert audio is not None
         command.extend(["-f", audio.format_id])
 
     if download_subtitle:
