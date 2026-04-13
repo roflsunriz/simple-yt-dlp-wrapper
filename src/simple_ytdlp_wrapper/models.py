@@ -16,6 +16,7 @@ class FormatOption:
     audio_role: str = ""
     has_audio: bool = False
     has_video: bool = False
+    requires_merge: bool = False
 
 
 @dataclass

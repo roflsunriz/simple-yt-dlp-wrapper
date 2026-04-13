@@ -651,7 +651,7 @@ class MainWindow(QMainWindow):
         allow_audio_merge = bool(
             manual_enabled
             and selected_video
-            and selected_video.kind == "映像専用"
+            and selected_video.requires_merge
             and self.dependencies.has_ffmpeg
             and self.audio_combo.count()
         )

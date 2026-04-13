@@ -84,6 +84,26 @@ def _build_audio_label(language: str, audio_role: str) -> str:
     return language
 
 
+def _has_media_stream(value: object) -> bool:
+    return str(value or "").lower() not in {"", "none", "null"}
+
+
+def _format_has_video(item: dict) -> bool:
+    return _has_media_stream(item.get("vcodec")) or _has_media_stream(item.get("video_ext"))
+
+
+def _format_has_audio(item: dict) -> bool:
+    return _has_media_stream(item.get("acodec")) or _has_media_stream(item.get("audio_ext"))
+
+
+def _is_direct_media_file(item: dict) -> bool:
+    return (
+        not _has_media_stream(item.get("vcodec"))
+        and not _has_media_stream(item.get("acodec"))
+        and (_has_media_stream(item.get("video_ext")) or _has_media_stream(item.get("audio_ext")))
+    )
+
+
 def _audio_priority(item: FormatOption, original_audio_language: str) -> int:
     language = _base_language(item.language)
     original_language = _base_language(original_audio_language)
@@ -142,8 +162,8 @@ def _auto_select_formats(
 ) -> tuple[FormatOption | None, FormatOption | None]:
     candidates: list[tuple[FormatOption | None, FormatOption | None]] = []
 
-    integrated_videos = [item for item in analysis.video_formats if item.has_audio]
-    video_only_formats = [item for item in analysis.video_formats if not item.has_audio]
+    integrated_videos = [item for item in analysis.video_formats if not item.requires_merge]
+    video_only_formats = [item for item in analysis.video_formats if item.requires_merge]
     audio_only_formats = [item for item in analysis.audio_formats if not item.has_video]
 
     candidates.extend((video, None) for video in integrated_videos)
@@ -218,18 +238,19 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
     video_formats: list[FormatOption] = []
     audio_formats: list[FormatOption] = []
     for item in formats:
-        vcodec = item.get("vcodec", "none")
-        acodec = item.get("acodec", "none")
+        has_video = _format_has_video(item)
+        has_audio = _format_has_audio(item)
         ext = item.get("ext", "")
         height = int(item.get("height") or 0)
         bitrate = float(item.get("tbr") or item.get("abr") or 0.0)
         language = str(item.get("language") or "")
         audio_role = _classify_audio_role(language, _is_original_audio(item), original_audio_language)
         audio_label = _build_audio_label(language, audio_role)
-        if vcodec != "none":
-            kind = "統合済み" if acodec != "none" else "映像専用"
+        if has_video:
+            requires_merge = not has_audio and not _is_direct_media_file(item)
+            kind = "統合済み" if has_audio else "映像専用" if requires_merge else "動画のみ"
             label_parts = [str(item.get("format_id", "")), f"{height or '?'}p", ext, kind]
-            if acodec != "none" and audio_label:
+            if has_audio and audio_label:
                 label_parts.append(audio_label)
             video_formats.append(
                 FormatOption(
@@ -241,11 +262,12 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
                     kind=kind,
                     language=language,
                     audio_role=audio_role,
-                    has_audio=acodec != "none",
+                    has_audio=has_audio,
                     has_video=True,
+                    requires_merge=requires_merge,
                 )
             )
-        if acodec != "none" and vcodec == "none":
+        if has_audio and not has_video:
             abr = int(item.get("abr") or bitrate or 0)
             kind = "音声専用"
             label_parts = [str(item.get("format_id", "")), f"{abr}kbps", ext, kind]
@@ -263,6 +285,7 @@ def analyze_url(url: str, dependencies: DependencyStatus) -> AnalysisResult:
                     audio_role=audio_role,
                     has_audio=True,
                     has_video=False,
+                    requires_merge=False,
                 )
             )
 
@@ -401,7 +424,7 @@ def build_download_command(
             "ダウンロード可能なフォーマットを選択できません。",
         )
 
-    if video and video.kind == "映像専用" and audio:
+    if video and video.requires_merge and audio:
         if not dependencies.has_ffmpeg:
             raise YtDlpError("missing_ffmpeg", "ffmpeg 未検出", "ffmpeg が見つからないためマージできません。")
         command.extend(["-f", f"{video.format_id}+{audio.format_id}", "--merge-output-format", container])
