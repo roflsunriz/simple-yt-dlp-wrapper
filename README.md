@@ -15,7 +15,6 @@
 ## 動作環境
 
 - Windows
-- Python 3.11 以上を推奨
 - `yt-dlp`
 - `ffmpeg`
 
@@ -24,7 +23,9 @@
 - `PATH` に通す
 - アプリ実行ファイルと同じディレクトリに `yt-dlp.exe` / `ffmpeg.exe` を置く
 
-## セットアップ
+## 開発時のセットアップ
+
+開発やソースからの実行には Python 3.11 以上を推奨します。
 
 ```powershell
 python -m venv .venv
@@ -46,6 +47,15 @@ powershell -ExecutionPolicy Bypass -File .\setup-scripts\install-dependencies.ps
 ```powershell
 python app.pyw
 ```
+
+## リリースバイナリの利用
+
+配布版の `exe` を使うだけなら Python のインストールは不要です。`yt-dlp.exe` と `ffmpeg.exe` は次のいずれかで配置してください。
+
+- `PATH` に通す
+- アプリ実行ファイルと同じディレクトリに置く
+
+リリースバイナリは `dist/simple-yt-dlp-wrapper/` 配下の成果物をそのまま使えます。
 
 ## EXE ビルド
 
