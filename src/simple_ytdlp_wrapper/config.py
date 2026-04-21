@@ -29,6 +29,10 @@ class AppSettings:
     video_format_id: str = ""
     audio_format_id: str = ""
     container: str = "mp4"
+    audio_output_format: str = "mp3"
+    audio_codec: str = "auto"
+    audio_sample_rate: str = "auto"
+    audio_bitrate: str = "auto"
     download_subtitle: bool = False
     embed_subtitle: bool = False
     output_dir: str = ""

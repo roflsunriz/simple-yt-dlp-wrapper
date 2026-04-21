@@ -49,6 +49,31 @@ from .yt_dlp_service import (
     snapshot_existing_paths,
 )
 
+AUDIO_OUTPUT_FORMATS = [
+    ("MP3", "mp3"),
+    ("M4A", "m4a"),
+    ("AAC", "aac"),
+    ("Opus", "opus"),
+    ("Vorbis", "vorbis"),
+    ("FLAC", "flac"),
+    ("ALAC", "alac"),
+    ("WAV", "wav"),
+]
+
+AUDIO_CODEC_OPTIONS = {
+    "mp3": [("自動", "auto"), ("libmp3lame", "libmp3lame")],
+    "m4a": [("自動", "auto"), ("aac", "aac")],
+    "aac": [("自動", "auto"), ("aac", "aac")],
+    "opus": [("自動", "auto"), ("libopus", "libopus"), ("opus", "opus")],
+    "vorbis": [("自動", "auto"), ("libvorbis", "libvorbis")],
+    "flac": [("自動", "auto"), ("flac", "flac")],
+    "alac": [("自動", "auto"), ("alac", "alac")],
+    "wav": [("自動", "auto"), ("pcm_s16le", "pcm_s16le"), ("pcm_s24le", "pcm_s24le"), ("pcm_f32le", "pcm_f32le")],
+}
+
+AUDIO_SAMPLE_RATES = [("自動", "auto"), ("22050 Hz", "22050"), ("32000 Hz", "32000"), ("44100 Hz", "44100"), ("48000 Hz", "48000"), ("96000 Hz", "96000")]
+AUDIO_BITRATES = [("自動", "auto"), ("64 kbps", "64K"), ("96 kbps", "96K"), ("128 kbps", "128K"), ("160 kbps", "160K"), ("192 kbps", "192K"), ("256 kbps", "256K"), ("320 kbps", "320K")]
+
 STATE_CONFIGS = {
     "初期": StateConfig(True, True, False, False, True, True, True),
     "分析中": StateConfig(False, False, False, False, False, False, False),
@@ -121,15 +146,16 @@ class MainWindow(QMainWindow):
         self.best_radio = QRadioButton("最高画質モード")
         self.fullhd_radio = QRadioButton("1080pモード")
         self.manual_radio = QRadioButton("マニュアルモード")
+        self.audio_only_radio = QRadioButton("音声のみモード")
         self.mode_buttons = QButtonGroup(self)
-        for button in (self.best_radio, self.fullhd_radio, self.manual_radio):
+        for button in (self.best_radio, self.fullhd_radio, self.manual_radio, self.audio_only_radio):
             self.mode_buttons.addButton(button)
             button.toggled.connect(self._update_manual_controls)
             mode_layout.addWidget(button)
         root.addWidget(mode_group)
 
-        manual_group = QGroupBox("マニュアル選択")
-        manual_layout = QGridLayout(manual_group)
+        self.manual_group = QGroupBox("マニュアル選択")
+        manual_layout = QGridLayout(self.manual_group)
         self.video_combo = QComboBox()
         self.audio_combo = QComboBox()
         self.container_combo = QComboBox()
@@ -142,7 +168,34 @@ class MainWindow(QMainWindow):
         manual_layout.addWidget(self.audio_combo, 1, 1)
         manual_layout.addWidget(QLabel("出力コンテナ"), 2, 0)
         manual_layout.addWidget(self.container_combo, 2, 1)
-        root.addWidget(manual_group)
+        root.addWidget(self.manual_group)
+
+        self.audio_output_group = QGroupBox("音声変換")
+        audio_output_layout = QGridLayout(self.audio_output_group)
+        self.audio_format_combo = QComboBox()
+        self.audio_codec_combo = QComboBox()
+        self.audio_sample_rate_combo = QComboBox()
+        self.audio_bitrate_combo = QComboBox()
+        for label, value in AUDIO_OUTPUT_FORMATS:
+            self.audio_format_combo.addItem(label, value)
+        for label, value in AUDIO_SAMPLE_RATES:
+            self.audio_sample_rate_combo.addItem(label, value)
+        for label, value in AUDIO_BITRATES:
+            self.audio_bitrate_combo.addItem(label, value)
+        self.audio_format_combo.currentIndexChanged.connect(self._refresh_audio_codec_options)
+        self.audio_format_combo.currentIndexChanged.connect(self._update_mode_summary)
+        self.audio_codec_combo.currentIndexChanged.connect(self._update_mode_summary)
+        self.audio_sample_rate_combo.currentIndexChanged.connect(self._update_mode_summary)
+        self.audio_bitrate_combo.currentIndexChanged.connect(self._update_mode_summary)
+        audio_output_layout.addWidget(QLabel("出力形式"), 0, 0)
+        audio_output_layout.addWidget(self.audio_format_combo, 0, 1)
+        audio_output_layout.addWidget(QLabel("コーデック"), 1, 0)
+        audio_output_layout.addWidget(self.audio_codec_combo, 1, 1)
+        audio_output_layout.addWidget(QLabel("サンプリングレート"), 2, 0)
+        audio_output_layout.addWidget(self.audio_sample_rate_combo, 2, 1)
+        audio_output_layout.addWidget(QLabel("ビットレート"), 3, 0)
+        audio_output_layout.addWidget(self.audio_bitrate_combo, 3, 1)
+        root.addWidget(self.audio_output_group)
 
         options_row = QHBoxLayout()
         self.subtitle_checkbox = QCheckBox("字幕をダウンロード")
@@ -216,9 +269,20 @@ class MainWindow(QMainWindow):
         self.embed_subtitle_checkbox.setChecked(self.settings.embed_subtitle)
         self.open_output_checkbox.setChecked(self.settings.open_output_dir)
         self.container_combo.setCurrentText(self.settings.container)
+        audio_format_index = self.audio_format_combo.findData(self.settings.audio_output_format)
+        self.audio_format_combo.setCurrentIndex(audio_format_index if audio_format_index >= 0 else 0)
+        self._refresh_audio_codec_options()
+        audio_codec_index = self.audio_codec_combo.findData(self.settings.audio_codec)
+        self.audio_codec_combo.setCurrentIndex(audio_codec_index if audio_codec_index >= 0 else 0)
+        audio_sample_rate_index = self.audio_sample_rate_combo.findData(self.settings.audio_sample_rate)
+        self.audio_sample_rate_combo.setCurrentIndex(audio_sample_rate_index if audio_sample_rate_index >= 0 else 0)
+        audio_bitrate_index = self.audio_bitrate_combo.findData(self.settings.audio_bitrate)
+        self.audio_bitrate_combo.setCurrentIndex(audio_bitrate_index if audio_bitrate_index >= 0 else 0)
         self.embed_subtitle_checkbox.setEnabled(False)
         if self.settings.download_mode == "manual":
             self.manual_radio.setChecked(True)
+        elif self.settings.download_mode == "audio_only":
+            self.audio_only_radio.setChecked(True)
         elif self.settings.download_mode == "1080p":
             self.fullhd_radio.setChecked(True)
         else:
@@ -262,9 +326,13 @@ class MainWindow(QMainWindow):
         self.best_radio.setEnabled(config.mode_controls)
         self.fullhd_radio.setEnabled(config.mode_controls)
         self.manual_radio.setEnabled(config.mode_controls)
+        self.audio_only_radio.setEnabled(config.mode_controls)
         self.subtitle_checkbox.setEnabled(config.mode_controls and bool(self.analysis_result and self.analysis_result.subtitles))
         self.embed_subtitle_checkbox.setEnabled(
-            config.mode_controls and self.subtitle_checkbox.isChecked() and bool(self.analysis_result and self.analysis_result.subtitles)
+            config.mode_controls
+            and not self.audio_only_radio.isChecked()
+            and self.subtitle_checkbox.isChecked()
+            and bool(self.analysis_result and self.analysis_result.subtitles)
         )
         self.download_button.setEnabled(config.download and self._download_ready())
         self._update_manual_controls()
@@ -282,12 +350,27 @@ class MainWindow(QMainWindow):
             selected_audio = self.audio_combo.currentData()
             if not selected_video and not selected_audio:
                 return False
+        if self.audio_only_radio.isChecked():
+            if not self._audio_only_source_ready():
+                return False
+            if not self.dependencies.has_ffmpeg:
+                return False
         return True
 
     def _update_manual_controls(self) -> None:
         enabled = self.manual_radio.isChecked() and self.status_name != "ダウンロード中"
+        audio_only_enabled = self.audio_only_radio.isChecked() and self.status_name != "ダウンロード中"
+        self.manual_group.setVisible(self.manual_radio.isChecked())
+        self.audio_output_group.setVisible(self.audio_only_radio.isChecked())
         self.video_combo.setEnabled(enabled)
         self._sync_manual_selection_state()
+        self.audio_format_combo.setEnabled(audio_only_enabled)
+        self.audio_codec_combo.setEnabled(audio_only_enabled)
+        self.audio_sample_rate_combo.setEnabled(audio_only_enabled)
+        self.audio_bitrate_combo.setEnabled(audio_only_enabled)
+        if audio_only_enabled:
+            self.container_combo.setEnabled(False)
+            self.video_combo.setEnabled(False)
         if self.status_name == "分析成功":
             self.download_button.setEnabled(self._download_ready())
         self._update_mode_summary()
@@ -439,7 +522,15 @@ class MainWindow(QMainWindow):
                 return
             overwrite = True
 
-        mode = "manual" if self.manual_radio.isChecked() else "1080p" if self.fullhd_radio.isChecked() else "best"
+        mode = (
+            "manual"
+            if self.manual_radio.isChecked()
+            else "audio_only"
+            if self.audio_only_radio.isChecked()
+            else "1080p"
+            if self.fullhd_radio.isChecked()
+            else "best"
+        )
         try:
             command = build_download_command(
                 dependencies=self.dependencies,
@@ -450,6 +541,10 @@ class MainWindow(QMainWindow):
                 video_format_id=self.video_combo.currentData() or "",
                 audio_format_id=self.audio_combo.currentData() or "",
                 container=self.container_combo.currentText(),
+                audio_output_format=self.audio_format_combo.currentData() or "mp3",
+                audio_codec=self.audio_codec_combo.currentData() or "auto",
+                audio_sample_rate=self.audio_sample_rate_combo.currentData() or "auto",
+                audio_bitrate=self.audio_bitrate_combo.currentData() or "auto",
                 download_subtitle=self.subtitle_checkbox.isChecked(),
                 embed_subtitle=self.embed_subtitle_checkbox.isChecked(),
                 overwrite=overwrite,
@@ -621,11 +716,21 @@ class MainWindow(QMainWindow):
 
     def _collect_settings(self) -> None:
         self.settings.download_mode = (
-            "manual" if self.manual_radio.isChecked() else "1080p" if self.fullhd_radio.isChecked() else "best"
+            "manual"
+            if self.manual_radio.isChecked()
+            else "audio_only"
+            if self.audio_only_radio.isChecked()
+            else "1080p"
+            if self.fullhd_radio.isChecked()
+            else "best"
         )
         self.settings.video_format_id = self.video_combo.currentData() or ""
         self.settings.audio_format_id = self.audio_combo.currentData() or ""
         self.settings.container = self.container_combo.currentText()
+        self.settings.audio_output_format = self.audio_format_combo.currentData() or "mp3"
+        self.settings.audio_codec = self.audio_codec_combo.currentData() or "auto"
+        self.settings.audio_sample_rate = self.audio_sample_rate_combo.currentData() or "auto"
+        self.settings.audio_bitrate = self.audio_bitrate_combo.currentData() or "auto"
         self.settings.download_subtitle = self.subtitle_checkbox.isChecked()
         self.settings.embed_subtitle = self.embed_subtitle_checkbox.isChecked()
         self.settings.output_dir = self.output_dir_input.text().strip()
@@ -647,6 +752,7 @@ class MainWindow(QMainWindow):
 
     def _sync_manual_selection_state(self) -> None:
         manual_enabled = self.manual_radio.isChecked() and self.status_name != "ダウンロード中"
+        audio_only_enabled = self.audio_only_radio.isChecked() and self.status_name != "ダウンロード中"
         selected_video = self._selected_video_option()
         allow_audio_merge = bool(
             manual_enabled
@@ -656,10 +762,13 @@ class MainWindow(QMainWindow):
             and self.audio_combo.count()
         )
         allow_audio_only = bool(manual_enabled and not selected_video and self.audio_combo.count())
-        self.audio_combo.setEnabled(allow_audio_merge or allow_audio_only)
+        allow_audio_only_mode = bool(audio_only_enabled and self.audio_combo.count())
+        self.audio_combo.setEnabled(allow_audio_merge or allow_audio_only or allow_audio_only_mode)
         self.container_combo.setEnabled(allow_audio_merge)
         if manual_enabled and selected_video and not allow_audio_merge:
             self.audio_combo.setCurrentIndex(-1)
+        if audio_only_enabled and self.audio_combo.currentIndex() < 0 and self.audio_combo.count():
+            self.audio_combo.setCurrentIndex(0)
         if self.status_name == "分析成功":
             self.download_button.setEnabled(self._download_ready())
         self._update_mode_summary()
@@ -667,6 +776,18 @@ class MainWindow(QMainWindow):
     def _update_mode_summary(self) -> None:
         if not self.analysis_result:
             self.mode_summary_label.setText("既定候補: -")
+            return
+        if self.audio_only_radio.isChecked():
+            source = self.audio_combo.currentText() or "自動選択"
+            self.mode_summary_label.setText(
+                "既定候補: "
+                f"{describe_mode_selection('audio_only', self.analysis_result)} / "
+                f"出力={self.audio_format_combo.currentText()} / "
+                f"コーデック={self.audio_codec_combo.currentText()} / "
+                f"サンプリング={self.audio_sample_rate_combo.currentText()} / "
+                f"ビットレート={self.audio_bitrate_combo.currentText()} / "
+                f"ソース={source}"
+            )
             return
         if self.manual_radio.isChecked():
             video = self.video_combo.currentText() or "-"
@@ -698,7 +819,10 @@ class MainWindow(QMainWindow):
 
     def _handle_subtitle_toggle(self, checked: bool) -> None:
         self.embed_subtitle_checkbox.setEnabled(
-            checked and self.status_name != "ダウンロード中" and bool(self.analysis_result and self.analysis_result.subtitles)
+            checked
+            and not self.audio_only_radio.isChecked()
+            and self.status_name != "ダウンロード中"
+            and bool(self.analysis_result and self.analysis_result.subtitles)
         )
         if not checked:
             self.embed_subtitle_checkbox.setChecked(False)
@@ -715,6 +839,9 @@ class MainWindow(QMainWindow):
             index = self.video_combo.findData(default_video.format_id) if default_video else -1
             self.video_combo.setCurrentIndex(index if index >= 0 else (0 if self.video_combo.count() else -1))
             self.audio_combo.setCurrentIndex(0 if self.audio_combo.count() else -1)
+        elif self.audio_only_radio.isChecked():
+            self.video_combo.setCurrentIndex(-1)
+            self.audio_combo.setCurrentIndex(0 if self.audio_combo.count() else -1)
         else:
             default_video, default_audio = select_manual_defaults(self.analysis_result)
             video_index = self.video_combo.findData(default_video.format_id) if default_video else -1
@@ -723,6 +850,25 @@ class MainWindow(QMainWindow):
             self.audio_combo.setCurrentIndex(audio_index if audio_index >= 0 else -1)
         self._sync_manual_selection_state()
         self._update_mode_summary()
+
+    def _audio_only_source_ready(self) -> bool:
+        if not self.analysis_result:
+            return False
+        if self.audio_combo.currentData():
+            return True
+        return any(item.has_audio and not item.requires_merge for item in self.analysis_result.video_formats)
+
+    def _refresh_audio_codec_options(self) -> None:
+        selected_codec = self.audio_codec_combo.currentData() or "auto"
+        selected_format = self.audio_format_combo.currentData() or "mp3"
+        options = AUDIO_CODEC_OPTIONS.get(selected_format, [("自動", "auto")])
+        self.audio_codec_combo.blockSignals(True)
+        self.audio_codec_combo.clear()
+        for label, value in options:
+            self.audio_codec_combo.addItem(label, value)
+        index = self.audio_codec_combo.findData(selected_codec)
+        self.audio_codec_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.audio_codec_combo.blockSignals(False)
 
     def _open_latest_log(self) -> None:
         if not LOG_DIR.exists():

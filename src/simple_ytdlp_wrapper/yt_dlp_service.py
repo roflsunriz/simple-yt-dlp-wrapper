@@ -28,6 +28,7 @@ UNIT_FACTORS = {
     "TiB": 1024**4,
 }
 CONTAINER_PRIORITY = {"mp4": 3, "m4a": 3, "mkv": 2, "webm": 1}
+AUDIO_OUTPUT_EXTENSIONS = {"aac", "alac", "flac", "m4a", "mp3", "opus", "vorbis", "wav"}
 
 
 class WindowsProcessKwargs(TypedDict, total=False):
@@ -375,7 +376,20 @@ def choose_subtitle(subtitles: list[SubtitleOption]) -> SubtitleOption | None:
     return subtitles[0] if subtitles else None
 
 
+def select_audio_only_source(analysis: AnalysisResult) -> tuple[FormatOption | None, FormatOption | None]:
+    if analysis.audio_formats:
+        return None, analysis.audio_formats[0]
+    integrated_videos = [item for item in analysis.video_formats if item.has_audio and not item.requires_merge]
+    if integrated_videos:
+        return integrated_videos[0], None
+    return None, None
+
+
 def describe_mode_selection(mode: str, analysis: AnalysisResult) -> str:
+    if mode == "audio_only":
+        video, audio = select_audio_only_source(analysis)
+        source = audio or video
+        return f"音声ソース={source.label}" if source else "-"
     if mode == "1080p":
         video, audio = _auto_select_formats(analysis, "1080p", allow_merge=True)
         if video:
@@ -400,6 +414,10 @@ def build_download_command(
     video_format_id: str,
     audio_format_id: str,
     container: str,
+    audio_output_format: str,
+    audio_codec: str,
+    audio_sample_rate: str,
+    audio_bitrate: str,
     download_subtitle: bool,
     embed_subtitle: bool,
     overwrite: bool,
@@ -413,6 +431,12 @@ def build_download_command(
         video, audio = _auto_select_formats(analysis, "best", allow_merge=dependencies.has_ffmpeg)
     elif mode == "1080p":
         video, audio = _auto_select_formats(analysis, "1080p", allow_merge=dependencies.has_ffmpeg)
+    elif mode == "audio_only":
+        selected_audio = next((item for item in analysis.audio_formats if item.format_id == audio_format_id), None)
+        if selected_audio:
+            video, audio = None, selected_audio
+        else:
+            video, audio = select_audio_only_source(analysis)
     else:
         video = next((item for item in analysis.video_formats if item.format_id == video_format_id), None)
         audio = next((item for item in analysis.audio_formats if item.format_id == audio_format_id), None)
@@ -424,6 +448,9 @@ def build_download_command(
             "ダウンロード可能なフォーマットを選択できません。",
         )
 
+    if mode == "audio_only" and not dependencies.has_ffmpeg:
+        raise YtDlpError("missing_ffmpeg", "ffmpeg 未検出", "音声変換には ffmpeg が必要です。")
+
     if video and video.requires_merge and audio:
         if not dependencies.has_ffmpeg:
             raise YtDlpError("missing_ffmpeg", "ffmpeg 未検出", "ffmpeg が見つからないためマージできません。")
@@ -434,11 +461,26 @@ def build_download_command(
         assert audio is not None
         command.extend(["-f", audio.format_id])
 
+    if mode == "audio_only":
+        output_format = audio_output_format if audio_output_format in AUDIO_OUTPUT_EXTENSIONS else "mp3"
+        command.extend(["-x", "--audio-format", output_format])
+        if audio_bitrate != "auto":
+            command.extend(["--audio-quality", audio_bitrate])
+        postprocessor_args: list[str] = []
+        if audio_codec != "auto":
+            postprocessor_args.extend(["-acodec", audio_codec])
+        if audio_sample_rate != "auto":
+            postprocessor_args.extend(["-ar", audio_sample_rate])
+        if audio_bitrate != "auto":
+            postprocessor_args.extend(["-b:a", audio_bitrate.lower()])
+        if postprocessor_args:
+            command.extend(["--postprocessor-args", f"ExtractAudio+ffmpeg_o:{' '.join(postprocessor_args)}"])
+
     if download_subtitle:
         subtitle = choose_subtitle(analysis.subtitles)
         if subtitle:
             command.extend(["--write-subs", "--sub-langs", subtitle.language, "--convert-subs", subtitle.ext])
-            if embed_subtitle:
+            if embed_subtitle and mode != "audio_only":
                 command.append("--embed-subs")
         else:
             raise YtDlpError("subtitle_unavailable", "字幕取得失敗", "利用可能な字幕が見つかりません。")
