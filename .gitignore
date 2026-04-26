@@ -6,3 +6,9 @@ logs/
 # pyinstaller
 dist/
 build/
+
+# Claw Code files
+.clawd-todos.json
+.claw/
+.sandbox-home/
+.sandbox-tmp/

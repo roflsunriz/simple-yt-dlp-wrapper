@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -9,8 +10,14 @@ from pathlib import Path
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else SOURCE_ROOT
 BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR)) if getattr(sys, "frozen", False) else SOURCE_ROOT
-CONFIG_PATH = APP_DIR / "settings.json"
-LOG_DIR = APP_DIR / "logs"
+
+# 設定ファイルパスを $env:USERPROFILE\mini-tools\simple-yt-dlp-wrapper\settings.json に変更
+USERPROFILE = Path(os.environ.get("USERPROFILE", Path.home()))
+CONFIG_DIR = USERPROFILE / "mini-tools" / "simple-yt-dlp-wrapper"
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+CONFIG_PATH = CONFIG_DIR / "settings.json"
+LOG_DIR = CONFIG_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 WINDOWS_BIN_DIR = APP_DIR
 RESOURCES_DIR = APP_DIR / "resources"
 if not RESOURCES_DIR.exists():
@@ -46,6 +53,22 @@ class AppSettings:
     @classmethod
     def load(cls) -> SettingsLoadResult:
         defaults = cls.defaults()
+        
+        # 古い設定ファイルから新しい場所に移行
+        old_config_path = APP_DIR / "settings.json"
+        if old_config_path.exists() and not CONFIG_PATH.exists():
+            try:
+                # 古い設定ファイルを新しい場所にコピー
+                import shutil
+                shutil.copy2(old_config_path, CONFIG_PATH)
+                # 古いログディレクトリも移動（オプション）
+                old_log_dir = APP_DIR / "logs"
+                if old_log_dir.exists() and not LOG_DIR.exists():
+                    shutil.copytree(old_log_dir, LOG_DIR, dirs_exist_ok=True)
+            except Exception as exc:
+                # 移行に失敗しても続行
+                pass
+        
         if not CONFIG_PATH.exists():
             cls.save(defaults)
             return SettingsLoadResult(settings=defaults)
