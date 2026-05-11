@@ -1,3 +1,5 @@
+![main](./gallery/main.png)
+
 # simple-yt-dlp-wrapper
 
 `yt-dlp` と `ffmpeg` をバックエンドに使う `PyQt6` 製の Windows 向け GUI ダウンローダです。URL を解析してメタデータと利用可能フォーマットを表示し、GUI から動画・音声・字幕をダウンロードできます。
