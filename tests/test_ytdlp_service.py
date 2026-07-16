@@ -3,29 +3,35 @@ from __future__ import annotations
 import json
 import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from src.simple_ytdlp_wrapper.dependencies import DependencyStatus
-from src.simple_ytdlp_wrapper.yt_dlp_service import analyze_url, build_download_command
+from src.simple_ytdlp_wrapper.yt_dlp_service import (
+    YtDlpError,
+    analyze_url,
+    build_download_command,
+    run_download,
+)
 
 
 class AnalyzeUrlCodecFallbackTests(unittest.TestCase):
     def setUp(self) -> None:
         self.dependencies = DependencyStatus(yt_dlp_path="yt-dlp", ffmpeg_path=None)
-        self.payload = {
+        self.formats: list[dict[str, object]] = [
+            {
+                "format_id": "http",
+                "ext": "mp4",
+                "video_ext": "mp4",
+                "audio_ext": "none",
+                "format": "http - unknown",
+                "url": "https://video.twimg.com/sample.mp4",
+            }
+        ]
+        self.payload: dict[str, object] = {
             "title": "sample",
             "description": "",
             "thumbnail": "https://example.com/thumb.jpg",
-            "formats": [
-                {
-                    "format_id": "http",
-                    "ext": "mp4",
-                    "video_ext": "mp4",
-                    "audio_ext": "none",
-                    "format": "http - unknown",
-                    "url": "https://video.twimg.com/sample.mp4",
-                }
-            ],
+            "formats": self.formats,
             "subtitles": {},
             "automatic_captions": {},
         }
@@ -79,7 +85,7 @@ class AnalyzeUrlCodecFallbackTests(unittest.TestCase):
         self.assertIn("http", command)
 
     def test_build_download_command_for_audio_only_adds_extract_audio_options(self) -> None:
-        self.payload["formats"].append(
+        self.formats.append(
             {
                 "format_id": "251",
                 "ext": "webm",
@@ -121,6 +127,77 @@ class AnalyzeUrlCodecFallbackTests(unittest.TestCase):
         self.assertIn("192K", command)
         self.assertIn("--postprocessor-args", command)
         self.assertTrue(any("ExtractAudio+ffmpeg_o:-acodec libmp3lame -ar 44100 -b:a 192k" == item for item in command))
+
+    def test_merge_command_passes_resolved_ffmpeg_location(self) -> None:
+        self.formats[:] = [
+            {
+                "format_id": "hls-video",
+                "ext": "mp4",
+                "vcodec": "avc1.640032",
+                "acodec": "none",
+                "video_ext": "mp4",
+                "audio_ext": "none",
+                "height": 1080,
+                "tbr": 8500,
+            },
+            {
+                "format_id": "hls-audio",
+                "ext": "mp4",
+                "vcodec": "none",
+                "acodec": None,
+                "video_ext": "none",
+                "audio_ext": "mp4",
+                "abr": 128,
+            },
+        ]
+        ffmpeg_path = "C:\\ffmpeg\\bin\\ffmpeg.exe"
+        dependencies = DependencyStatus(yt_dlp_path="yt-dlp", ffmpeg_path=ffmpeg_path)
+        with (
+            patch("src.simple_ytdlp_wrapper.yt_dlp_service._run_command", return_value=self._completed()),
+            patch("src.simple_ytdlp_wrapper.yt_dlp_service._fetch_thumbnail_url", return_value=""),
+        ):
+            analysis = analyze_url("https://x.com/example/status/1", dependencies)
+
+        command = build_download_command(
+            dependencies=dependencies,
+            analysis=analysis,
+            output_dir="C:\\Downloads",
+            file_basename="sample",
+            mode="best",
+            video_format_id="",
+            audio_format_id="",
+            container="mp4",
+            audio_output_format="mp3",
+            audio_codec="auto",
+            audio_sample_rate="auto",
+            audio_bitrate="auto",
+            download_subtitle=False,
+            embed_subtitle=False,
+            overwrite=False,
+        )
+
+        self.assertIn("hls-video+hls-audio", command)
+        location_index = command.index("--ffmpeg-location")
+        self.assertEqual(command[location_index + 1], ffmpeg_path)
+
+    def test_merge_warning_is_not_reported_as_success(self) -> None:
+        process = Mock()
+        process.stdout = ["WARNING: ffmpeg not found. The downloaded formats will not be merged.\n"]
+        process.wait.return_value = 0
+        process.poll.return_value = 0
+        dependencies = DependencyStatus(yt_dlp_path="yt-dlp", ffmpeg_path="C:\\ffmpeg.cmd")
+
+        with patch("src.simple_ytdlp_wrapper.yt_dlp_service.subprocess.Popen", return_value=process):
+            with self.assertRaises(YtDlpError) as context:
+                run_download(
+                    ["yt-dlp", "-f", "video+audio", "--merge-output-format", "mp4", "https://example.com"],
+                    dependencies,
+                    on_progress=lambda _payload: None,
+                    is_cancelled=lambda: False,
+                )
+
+        self.assertEqual(context.exception.code, "missing_ffmpeg")
+        self.assertIn("ffmpeg not found", context.exception.details)
 
 
 if __name__ == "__main__":

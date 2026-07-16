@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections import deque
 from pathlib import Path
 from typing import TypedDict
 
@@ -424,6 +425,8 @@ def build_download_command(
 ) -> list[str]:
     yt_dlp_path = _require_yt_dlp_path(dependencies)
     command: list[str] = [yt_dlp_path, "--newline", "--no-playlist", "-P", output_dir]
+    if dependencies.ffmpeg_path:
+        command.extend(["--ffmpeg-location", dependencies.ffmpeg_path])
     command.append("--force-overwrites" if overwrite else "--no-overwrites")
     command.extend(["-o", f"{sanitize_file_basename(file_basename or analysis.title)}.%(ext)s"])
 
@@ -506,6 +509,8 @@ def run_download(
         env=_build_env(dependencies.ffmpeg_path),
         **_build_windows_process_kwargs(),
     )
+    recent_output: deque[str] = deque(maxlen=100)
+    ffmpeg_missing_warning = False
     try:
         for raw_line in process.stdout or []:
             if is_cancelled():
@@ -518,6 +523,10 @@ def run_download(
                 raise DownloadCancelledError("ダウンロードを中止しました。")
 
             line = raw_line.strip()
+            if line:
+                recent_output.append(line)
+                if "ffmpeg not found" in line.lower():
+                    ffmpeg_missing_warning = True
             output_path = _extract_output_path(line)
             if output_path and on_output_path:
                 on_output_path(output_path)
@@ -530,8 +539,15 @@ def run_download(
         if process.poll() is None:
             process.kill()
 
+    output = "\n".join(recent_output)
+    if ffmpeg_missing_warning and _command_requires_ffmpeg(command):
+        raise YtDlpError(
+            "missing_ffmpeg",
+            "ffmpeg 未検出",
+            output or "yt-dlp が ffmpeg を検出できませんでした。",
+        )
     if return_code != 0:
-        raise _classify_download_error(command, return_code)
+        raise _classify_download_error(command, return_code, output)
 
 
 def _parse_progress_line(line: str) -> dict | None:
@@ -636,15 +652,22 @@ def _classify_analysis_error(result: subprocess.CompletedProcess[str]) -> YtDlpE
     return YtDlpError("analysis_failed", "URL分析失敗", text or "URL分析に失敗しました。")
 
 
-def _classify_download_error(command: list[str], return_code: int) -> YtDlpError:
-    stderr = f"yt-dlp exited with code {return_code}"
+def _command_requires_ffmpeg(command: list[str]) -> bool:
+    return any(
+        option in command
+        for option in ("--merge-output-format", "-x", "--embed-subs", "--convert-subs")
+    )
+
+
+def _classify_download_error(command: list[str], return_code: int, output: str = "") -> YtDlpError:
+    details = output or f"yt-dlp exited with code {return_code}"
     command_text = " ".join(command)
     lowered = command_text.lower()
     if "--write-subs" in lowered:
-        return YtDlpError("subtitle_download_failed", "字幕取得失敗", stderr)
+        return YtDlpError("subtitle_download_failed", "字幕取得失敗", details)
     if "--merge-output-format" in lowered:
-        return YtDlpError("merge_failed", "マージ失敗", stderr)
-    return YtDlpError("download_failed", "ダウンロード失敗", stderr)
+        return YtDlpError("merge_failed", "マージ失敗", details)
+    return YtDlpError("download_failed", "ダウンロード失敗", details)
 
 
 def _merge_error_text(result: subprocess.CompletedProcess[str]) -> str:
