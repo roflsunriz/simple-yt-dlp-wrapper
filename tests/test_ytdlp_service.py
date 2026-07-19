@@ -84,6 +84,34 @@ class AnalyzeUrlCodecFallbackTests(unittest.TestCase):
         self.assertIn("-f", command)
         self.assertIn("http", command)
 
+    def test_build_download_command_preserves_confirmed_filename_length(self) -> None:
+        with (
+            patch("src.simple_ytdlp_wrapper.yt_dlp_service._run_command", return_value=self._completed()),
+            patch("src.simple_ytdlp_wrapper.yt_dlp_service._fetch_thumbnail_url", return_value=""),
+        ):
+            analysis = analyze_url("https://x.com/example/status/1", self.dependencies)
+        filename = "a" * 40
+
+        command = build_download_command(
+            dependencies=self.dependencies,
+            analysis=analysis,
+            output_dir="C:\\Downloads",
+            file_basename=filename,
+            mode="best",
+            video_format_id="",
+            audio_format_id="",
+            container="mp4",
+            audio_output_format="mp3",
+            audio_codec="auto",
+            audio_sample_rate="auto",
+            audio_bitrate="auto",
+            download_subtitle=False,
+            embed_subtitle=False,
+            overwrite=False,
+        )
+
+        self.assertIn(f"{filename}.%(ext)s", command)
+
     def test_build_download_command_for_audio_only_adds_extract_audio_options(self) -> None:
         self.formats.append(
             {

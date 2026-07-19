@@ -32,16 +32,18 @@ WINDOWS_RESERVED = {
 }
 
 
-def sanitize_file_basename(title: str, max_length: int = 32) -> str:
-    text = CONTROL_CHARS.sub("", title or "")
+def sanitize_file_basename(value: str) -> str:
+    text = CONTROL_CHARS.sub("", value or "")
     text = TRAILING_EXTENSION.sub("", text.strip())
     text = INVALID_CHARS.sub("_", text)
     text = text.strip().rstrip(".")
     if not text or text.isspace():
         text = "video"
-    text = text[:max_length].rstrip(" .")
-    if not text:
-        text = "video"
     if text.upper() in WINDOWS_RESERVED:
         text = f"{text}_"
     return text
+
+
+def suggest_file_basename(title: str, max_length: int = 32) -> str:
+    text = sanitize_file_basename(title)[:max_length].rstrip(" .")
+    return text or "video"

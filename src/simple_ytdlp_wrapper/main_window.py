@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 
 from .config import AppSettings, LOG_DIR
 from .dependencies import DependencyStatus, detect_dependencies
-from .filename_utils import sanitize_file_basename
+from .filename_utils import sanitize_file_basename, suggest_file_basename
 from .logging_utils import configure_logging, log_event
 from .models import AnalysisResult, DownloadContext, FormatOption, StateConfig
 from .workers import AnalysisSignals, DownloadSignals, WorkerRunnable
@@ -221,12 +221,16 @@ class MainWindow(QMainWindow):
         self.output_dir_input = QLineEdit()
         self.browse_output_button = QPushButton("出力先選択")
         self.default_output_button = QPushButton("デフォルト")
+        self.open_output_button = QPushButton("出力先を開く")
+        self.open_output_button.setObjectName("openOutputDirectoryButton")
         self.browse_output_button.clicked.connect(self._browse_output_dir)
         self.default_output_button.clicked.connect(self._set_default_output_dir)
+        self.open_output_button.clicked.connect(self._open_output_dir)
         output_row.addWidget(QLabel("ダウンロード先"))
         output_row.addWidget(self.output_dir_input)
         output_row.addWidget(self.browse_output_button)
         output_row.addWidget(self.default_output_button)
+        output_row.addWidget(self.open_output_button)
         root.addLayout(output_row)
 
         filename_row = QHBoxLayout()
@@ -323,6 +327,7 @@ class MainWindow(QMainWindow):
         self.filename_input.setEnabled(config.output_controls)
         self.browse_output_button.setEnabled(config.output_controls)
         self.default_output_button.setEnabled(config.output_controls)
+        self.open_output_button.setEnabled(True)
         self.best_radio.setEnabled(config.mode_controls)
         self.fullhd_radio.setEnabled(config.mode_controls)
         self.manual_radio.setEnabled(config.mode_controls)
@@ -416,7 +421,7 @@ class MainWindow(QMainWindow):
         )
         self.title_value.setText(result.title)
         self.description_value.setPlainText(result.description)
-        self.filename_input.setText(sanitize_file_basename(result.title))
+        self.filename_input.setText(suggest_file_basename(result.title))
         self._load_thumbnail(result.thumbnail_url)
         self._populate_format_combos(result)
         self._apply_mode_defaults()
@@ -696,8 +701,16 @@ class MainWindow(QMainWindow):
 
     def _open_output_dir(self) -> None:
         output_dir = self.output_dir_input.text().strip()
-        if output_dir and Path(output_dir).exists():
+        if not output_dir:
+            self._show_error("出力先未指定", "ダウンロード先ディレクトリを指定してください。")
+            return
+        if not Path(output_dir).is_dir():
+            self._show_error("出力先エラー", "ダウンロード先ディレクトリが存在しません。")
+            return
+        try:
             os.startfile(output_dir)
+        except OSError as exc:
+            self._show_error("出力先を開けません", str(exc))
 
     def _output_exists(self, output_dir: Path, basename: str) -> bool:
         return any(candidate.is_file() for candidate in output_dir.glob(f"{basename}.*"))
