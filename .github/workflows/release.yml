@@ -58,7 +58,7 @@ jobs:
           Compress-Archive -Path "dist/simple-yt-dlp-wrapper/*" -DestinationPath $archive
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: simple-yt-dlp-wrapper-${{ steps.meta.outputs.tag }}-windows-x64
           path: dist/simple-yt-dlp-wrapper-${{ steps.meta.outputs.tag }}-windows-x64.zip
