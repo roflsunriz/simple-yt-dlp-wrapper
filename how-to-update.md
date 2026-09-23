@@ -30,3 +30,9 @@ python -m PyInstaller --clean --noconfirm app.spec
 - ローカルのビルド失敗時は `build/` と `dist/` を削除して同じ PyInstaller コマンドを再実行します。
 - タグの push 前に問題が見つかった場合は修正コミットを追加してからタグを作成します。
 - タグの push 後に問題が見つかった場合は公開済みタグを付け替えず、修正版を次のパッチバージョンとしてリリースします。
+
+## Dependabot PR の更新
+
+前提は `.github/dependabot.yml` と PR 用 CI（CI）です。更新 PR の head SHA と `gh pr checks <PR番号>` の結果を確認してください。patch／minor は全チェック成功後に自動取り込みされます。初回 CI 失敗は failed jobs のみを 1 回再実行し、再失敗した PR は残して手動で修正します。
+
+設定を変えたときは `actionlint .github/workflows/dependabot-automation.yml` と実際の PR の Actions 結果を確認します。問題があれば呼び出し先の共通 workflow SHA を直前の検証済み値へ戻すコミットを push します。取り込まれた依存更新に問題があれば通常の revert コミットで復旧します。
