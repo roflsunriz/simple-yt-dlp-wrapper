@@ -17,3 +17,9 @@ Get-Content -Raw -LiteralPath .\COMMON-AGENTS.md
 
 - 作業前にこのリポジトリの `README.md`、設定ファイル、CI 定義を確認する。
 - 追加のプロジェクト固有ルールが必要になった場合は、このファイルに追記する。
+
+## 作業メモ（2026-09-23 確認）
+
+- Dependabot の major 更新（`actions/*`、`softprops/*`、`requirements.txt` の下限引き上げ）は自動取り込み対象外のため、CI 成功確認後に `gh pr merge --merge --delete-branch` で手動統合する。同一ファイルの異なる行への変更は競合せず順次マージできた。根拠: `gh pr view --json statusCheckRollup` と `.github/workflows/ci.yml`、`release.yml`。
+- ローカル検証は `how-to-update.md` の手順に従い `python -m compileall app.pyw src tests`、`python -m unittest discover -s tests -v`、`mypy --explicit-package-bases`、`pip_audit -r requirements.txt`、import smoke test を実行する。ローカルは Python 3.14.7／PyQt6 6.10.2 で CI（3.11／3.12）より新しい／古い組み合わせになるため、両方の結果を根拠にする。
+- PowerShell では `for ...; do ...; done` や `gh pr diff --stat` は使えない。`gh pr diff <番号> --name-only`／`--patch` を使う。

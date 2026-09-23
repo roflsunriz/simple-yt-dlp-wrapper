@@ -11,6 +11,8 @@
 ### Changed
 
 - 依存更新を安全に省力化するため、Dependabot の patch／minor PR を既存 CI の全チェック成功後に自動取り込みし、失敗ジョブを一度再実行する設定を追加した。
+- GitHub Actions の保守性を保つため、`actions/checkout` を v4 から v7 へ、`actions/setup-python` を v5 から v7 へ、`actions/upload-artifact` を v4 から v7 へ、`softprops/action-gh-release` を v2 から v3 へ更新した。
+- PyQt6 の新しい版を利用できるように、要件の下限を 6.7 から 6.11.0 へ引き上げた（上限 `<7` は維持）。
 - 作業開始時の共通指針見落としを防ぐため、調査やコマンド実行より前に `COMMON-AGENTS.md` を先頭から末尾まで読み、EOFを確認する必須ゲートを追加した。
 
 ## [1.0.8] - 2026-07-19
