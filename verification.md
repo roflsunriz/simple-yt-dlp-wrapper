@@ -11,3 +11,11 @@
 対象は major 更新 5 件（`actions/checkout` v4→v7、 `actions/setup-python` v5→v7、`actions/upload-artifact` v4→v7、`softprops/action-gh-release` v2→v3、`PyQt6>=6.7`→`>=6.11.0,<7`、PR #1〜#5）で、いずれも CI（verify 3.11／3.12、classify）が成功していたため `gh pr merge --merge --delete-branch` で main へ順次統合し、リモートブランチ削除と open PR ゼロを確認した。ローカルでは `python -m compileall`、`unittest` 14 件、`mypy`、`pip-audit`、import smoke test が成功した（ローカル Python 3.14.7／PyQt6 6.10.2 のため、CI の 3.11／3.12 環境での成功も併せて根拠とした）。
 
 大量の Dependabot PR により CI 完了より分類が遅れる場合でも、分類後の `workflow_dispatch` が現在の PR 番号と head SHA を照合して再評価する。別の作成者、古い SHA、未完了の CI はマージしない。
+
+## 2026-10-05: GitHub受付・READMEの整備（公開前）
+
+- 比較元: `fdefae3b2da12984a2a57d194c06ee00690e5105`（`main`）。
+- 受付フォーム 2 件のYAML構造、重複キー・ID、入力型、選択肢、予約ファイル名を一括検査し、エラー0件。
+- 既存の固有質問・入力例・必須条件を原文と照合。READMEのリンク・画像・コマンド・条件を確認し、裏付けがある誤記だけを訂正した。
+- 既存のCI、Dependabot、labeler、ライセンスのファイル内容は比較元から変更していない。
+- 製品のビルド・インストール・実機操作、GitHub上のフォーム表示、公開後CIは今回の静的検証に含めない。公開後に実際の受付表示と必要ラベルの適用を確認する。
