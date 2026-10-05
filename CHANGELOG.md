@@ -10,6 +10,9 @@
 
 ### Changed
 
+
+- 不具合・機能提案などの受付とPRの記入形式を揃え、プロジェクト固有の確認項目を残した。 READMEは既存の意味と手順を保ち、実装と異なる説明や読みにくい表現を修正した。
+
 - 依存更新を安全に省力化するため、Dependabot の patch／minor PR を既存 CI の全チェック成功後に自動取り込みし、失敗ジョブを一度再実行する設定を追加した。
 - GitHub Actions の保守性を保つため、`actions/checkout` を v4 から v7 へ、`actions/setup-python` を v5 から v7 へ、`actions/upload-artifact` を v4 から v7 へ、`softprops/action-gh-release` を v2 から v3 へ更新した。
 - PyQt6 の新しい版を利用できるように、要件の下限を 6.7 から 6.11.0 へ引き上げた（上限 `<7` は維持）。

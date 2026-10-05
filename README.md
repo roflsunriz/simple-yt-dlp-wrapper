@@ -26,6 +26,15 @@
 - `PATH` に通す
 - アプリ実行ファイルと同じディレクトリに `yt-dlp.exe` / `ffmpeg.exe` を置く
 
+## リリースバイナリの利用
+
+配布版の `exe` を使うだけなら Python のインストールは不要です。`yt-dlp.exe` と `ffmpeg.exe` は次のいずれかで配置してください。
+
+- `PATH` に通す
+- アプリ実行ファイルと同じディレクトリに置く
+
+リリースバイナリは `dist/simple-yt-dlp-wrapper/` 配下の成果物をそのまま使えます。
+
 ## 開発時のセットアップ
 
 開発やソースからの実行には Python 3.11 以上を推奨します。
@@ -50,15 +59,6 @@ iex "& { $(iwr -useb 'https://raw.githubusercontent.com/roflsunriz/simple-yt-dlp
 ```powershell
 python app.pyw
 ```
-
-## リリースバイナリの利用
-
-配布版の `exe` を使うだけなら Python のインストールは不要です。`yt-dlp.exe` と `ffmpeg.exe` は次のいずれかで配置してください。
-
-- `PATH` に通す
-- アプリ実行ファイルと同じディレクトリに置く
-
-リリースバイナリは `dist/simple-yt-dlp-wrapper/` 配下の成果物をそのまま使えます。
 
 ## EXE ビルド
 
