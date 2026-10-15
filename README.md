@@ -37,64 +37,23 @@
 
 ## 開発時のセットアップ
 
-開発やソースからの実行には Python 3.11 以上を推奨します。
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-`yt-dlp` と `ffmpeg` を `winget` で導入する場合は、同梱のセットアップスクリプトも使えます。
-
-```powershell
-iex "& { $(iwr -useb 'https://raw.githubusercontent.com/roflsunriz/simple-yt-dlp-wrapper/main/setup-scripts/install-dependencies.ps1') }"
-```
-
-このスクリプトは `winget install Gyan.FFMpeg` と `winget install yt-dlp.yt-dlp` を順に実行します。`winget` が利用できる Windows 環境で実行してください。
+具体的な手順・構成・知見は [findings.md](<findings.md#readme-4>) に移動しました。着手前に該当条件を確認してください。
 
 ## 開発時の起動
 
-```powershell
-python app.pyw
-```
+具体的な手順・構成・知見は [findings.md](<findings.md#readme-5>) に移動しました。着手前に該当条件を確認してください。
 
 ## EXE ビルド
 
-`PyInstaller` を使って配布用バンドルを作成します。
-
-```powershell
-pip install pyinstaller
-pyinstaller --clean --noconfirm app.spec
-```
-
-ビルド成果物は `dist/simple-yt-dlp-wrapper/` に出力されます。配布時は生成された `.exe` と同梱ファイル一式をまとめて配布してください。
+具体的な手順・構成・知見は [findings.md](<findings.md#readme-6>) に移動しました。着手前に該当条件を確認してください。
 
 ## CI / CD
 
-- `ci.yml`
-  - `push` / `pull_request` で実行
-  - 依存関係のインストール
-  - ソースのコンパイルチェック
-  - アプリの import smoke test
-  - `PyInstaller` ビルド確認
-- `release.yml`
-  - `v*` タグ push または手動実行で実行
-  - Windows 向け配布バンドルをビルド
-  - ZIP 化した成果物を GitHub Actions artifact と GitHub Release に添付
-
-リリース用の推奨タグ形式は `v0.1.0` のような SemVer です。
+具体的な手順・構成・知見は [findings.md](<findings.md#readme-7>) に移動しました。着手前に該当条件を確認してください。
 
 ## プロジェクト構成
 
-```text
-src/simple_ytdlp_wrapper/  アプリ本体
-resources/                 アイコンなどの同梱リソース
-docs/                      仕様メモ
-app.pyw                    開発時エントリーポイント
-app.spec                   PyInstaller 定義
-```
+具体的な手順・構成・知見は [findings.md](<findings.md#readme-8>) に移動しました。着手前に該当条件を確認してください。
 
 ## ライセンス
 
@@ -102,4 +61,4 @@ MIT License。詳細は [LICENSE](LICENSE) を参照してください。
 
 ## 依存更新の自動処理
 
-Dependabot は対象の依存関係を毎週確認します。patch／minor 更新は PR のチェック（CI）が成功した後に自動で squash merge されます。CI の失敗ジョブは 1 回だけ再実行します。再失敗した PR は残して手動で修正します。major 更新は手動で確認します。
+具体的な手順・構成・知見は [findings.md](<findings.md#readme-10>) に移動しました。着手前に該当条件を確認してください。

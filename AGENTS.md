@@ -16,10 +16,15 @@ Get-Content -Raw -LiteralPath .\COMMON-AGENTS.md
 ## プロジェクト固有情報
 
 - 作業前にこのリポジトリの `README.md`、設定ファイル、CI 定義を確認する。
-- 追加のプロジェクト固有ルールが必要になった場合は、このファイルに追記する。
+- 純粋な行動義務・禁止事項はこのファイルへ、固有の実現手段・環境情報・調査知見は `findings.md` へ追記する。
 
 ## 作業メモ（2026-09-23 確認）
 
-- Dependabot の major 更新（`actions/*`、`softprops/*`、`requirements.txt` の下限引き上げ）は自動取り込み対象外のため、CI 成功確認後に `gh pr merge --merge --delete-branch` で手動統合する。同一ファイルの異なる行への変更は競合せず順次マージできた。根拠: `gh pr view --json statusCheckRollup` と `.github/workflows/ci.yml`、`release.yml`。
-- ローカル検証は `how-to-update.md` の手順に従い `python -m compileall app.pyw src tests`、`python -m unittest discover -s tests -v`、`mypy --explicit-package-bases`、`pip_audit -r requirements.txt`、import smoke test を実行する。ローカルは Python 3.14.7／PyQt6 6.10.2 で CI（3.11／3.12）より新しい／古い組み合わせになるため、両方の結果を根拠にする。
-- PowerShell では `for ...; do ...; done` や `gh pr diff --stat` は使えない。`gh pr diff <番号> --name-only`／`--patch` を使う。
+具体的な手順・構成・知見は [findings.md](<findings.md#agents-3>) に移動しました。着手前に該当条件を確認してください。
+
+
+## findings.md の確認と記録
+
+- [COMMON-AGENTS.md](COMMON-AGENTS.md) を全文読了した後、調査・計画・コマンド実行・編集の前に [findings.md](findings.md) も先頭から末尾まで全文読む。出力省略や要約を読了として扱わない。
+- 構成一覧、環境情報、コマンド、調査結果、過去の事実は `findings.md` に記録する。このファイルには目的、純粋な行動義務と禁止条件を残す。
+- 変更履歴と実測検証を記録し、ユーザーの指示、変更禁止、秘密情報保護、観測可能な完了条件を弱めない。
