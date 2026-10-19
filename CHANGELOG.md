@@ -10,6 +10,8 @@
 
 ### Changed
 
+- GitHub Actions の月間利用時間を抑えるため、Dependabot version update と自動マージを毎週・即時処理から毎月28日（Asia/Tokyo）の月末一括処理へ変更した。
+
 - Python版matrixをfail-fast化し、pipキャッシュと重複CIの取消しで配布ビルドの待ち時間を短縮した。
 
 - 共通指針とプロジェクト固有の実現手段を混同せず再利用できるように、文書の構成・環境・コマンド・調査知見を `findings.md` へ分離し、着手前の全文確認と参照導線を整えた。
